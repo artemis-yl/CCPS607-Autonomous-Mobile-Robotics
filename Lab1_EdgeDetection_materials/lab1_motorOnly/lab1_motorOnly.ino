@@ -13,11 +13,11 @@
 #define EN_B         32  // EN_B pin
 
 // PWM properties
-const int FREQ = 1000;        // PWM FREQuency
+const int FREQ = 30000;        // PWM FREQuency
 const int PWM_CHANNEL_A = 0; // PWM channel for motor A, 0-15
 const int PWM_CHANNEL_B = 1; // PWM channel for motor B, 0-15
 const int RESOLUTION = 8;    // 1-16bits. 8bit -> 0-255 duty cycle
-const int MOTOR_SPEED = 150; // duty cycle = 0 - 255. @ 9v this is good
+const int MOTOR_SPEED = 200; // duty cycle = 0 - 255. @ 9v this is good
 const int MIN_SPEED = 130;   // testing shows both can go from min 130
 
 
