@@ -4,20 +4,21 @@
 #include <Wire.h>
 #include "Adafruit_VL53L0X.h"
 
-#define SDA_R 21 // default
-#define SCL_R 22 
-#define SDA_L 19 // extra to set, not gonna deal with xshut nor i2c multiplexer
-#define SCL_L 23
+#define SDA_R 19 // extra to set, not gonna deal with xshut nor i2c multiplexer
+#define SCL_R 23 
+#define SDA_L 21 // default
+#define SCL_L 22
 // #define VL53L0X_I2C_ADDR 0x29
 
 TwoWire I2C_R = TwoWire(0);
 TwoWire I2C_L = TwoWire(1);
 
 Adafruit_VL53L0X right_TOF;// = Adafruit_VL53L0X();
-Adafruit_VL53L0X left_TOF; // = Adafruit_VL53L0X();
+Adafruit_VL53L0X left_TOF; // 
+Adafruit_VL53L0X::VL53L0X_Sense_config_t sensor_configR = Adafruit_VL53L0X::VL53L0X_SENSE_HIGH_ACCURACY;
+Adafruit_VL53L0X::VL53L0X_Sense_config_t sensor_configL = Adafruit_VL53L0X::VL53L0X_SENSE_HIGH_ACCURACY;
 
-const int EDGE_DISTANCE = 60; // sensor are 40-50mm away
-
+const int EDGE_DISTANCE = 65; // sensor are 40-50mm away
 
 /* ***********************************************************
  * MOTOR CONTROL VARIABLES
@@ -37,8 +38,8 @@ const int FREQ = 1000;        // PWM FREQuency
 const int PWM_CHANNEL_A = 0; // PWM channel for motor A, 0-15
 const int PWM_CHANNEL_B = 1; // PWM channel for motor B, 0-15
 const int RESOLUTION = 8;    // 1-16bits. 8bit -> 0-255 duty cycle
-const int MOTOR_SPEED = 200; // duty cycle = 0 - 255. @ 9v this is good
-const int MIN_SPEED = 130;   // testing shows both can go from min 130
+const int MOTOR_SPEED_MAX = 190; // duty cycle = 0 - 255. @ 5v this is good
+const int MOTOR_SPEED_MIN = 160;   // testing shows both can go from min 130 @ 9V, but 5V needs more
 
 
 void setup_tof(){
@@ -46,21 +47,17 @@ void setup_tof(){
   I2C_R.begin(SDA_R, SCL_R, 100000); // default
   I2C_L.begin(SDA_L, SCL_L, 100000);
 
-  if (!right_
-TOF.begin(VL53L0X_I2C_ADDR, false, &I2C_R
-) ) {
+  if (!right_TOF.begin(VL53L0X_I2C_ADDR, false, &I2C_R, sensor_configR) ) {
     Serial.println("Could not find a valid VL53L0X_1/r sensor, check wiring!");
     while (1);
   }
-  
-  if (!left_TOF.begin(VL53L0X_I2C_ADDR, false, &I2C_L) ) {
+  if (!left_TOF.begin(VL53L0X_I2C_ADDR, false, &I2C_L, sensor_configL) ) {
     Serial.println("Could not find a valid VL53L0X_2/l sensor, check wiring!");
     while (1);
   }
 
   // start continuous ranging
-  right_
-TOF.startRangeContinuous();
+  right_TOF.startRangeContinuous();
   left_TOF.startRangeContinuous();
 }
 
@@ -90,6 +87,7 @@ void setup_motors(){
 void setup() {
   Serial.begin(115200);
   Serial.println("Starting Edge Detection RC..."); 
+  delay(1000); // allow me to switch to serial monitor
 
   /************************************************************
    * VL53L0X / EDGE DETECTION SETUP
@@ -109,64 +107,79 @@ void loop() {
   //testMotorMovement();
   //testTOFsensors();
 
-  // first make sure readings availible
-  if (left_TOF.isRangeComplete() && right_TOF.isRangeComplete()) {
-    int right_d = right_TOF.readRange();
-    int left_d = left_TOF.readRange();
+  testEdge();
+}
 
-    /* THE ALG
-    // aka no edge detected
-    if ( if both left and right < XX mm )
-      - forward
-    // edge detected - both turn types, stop first then back a wee bit
-    else
-      - stop
-      - back a lil (very lil! edge case is rover place right at a corner diagonally)
+void testEdge(){
+  // check that both TOFs are BOTH ready
+  if (!readTOFs()) {
+    return;
+  }
+  uint16_t left_d = left_TOF.readRangeResult();
+  uint16_t right_d = right_TOF.readRangeResult();
 
-      // turn right either way
-      // aka edge right in front or at left side  => turn right
-      if both left and right > XX mm || if left >= XX mm and right < XXmm :  
-        - turn right
-      //  aka edge at right side => turn left
-      else if left < XX mm and right >= XXmm 
-        - turn  left
-    */
+  Serial.print("Right: ");
+  Serial.print(right_d);
+  Serial.print(" mm, Left: ");
+  Serial.print(left_d);
+  Serial.print(" mm ==> ");
 
-    // no edge detected => on table safe
-    if(left_d <= EDGE_DISTANCE && right_d <= EDGE_DISTANCE){
-      moveForward();
+  if (left_d <= EDGE_DISTANCE && right_d <= EDGE_DISTANCE) {
+    moveForward();
+  } 
+  else {
+    stop();          delay(500);
+    moveBackwards(); delay(500);
+    stop();          delay(500);
+
+    // edge ahead 
+    if (left_d > EDGE_DISTANCE && right_d > EDGE_DISTANCE){ 
+      Serial.print("Egde Ahead! -> ");
+      turnRight(); delay(5000); // turn away from edge
     }
-    // edge detected
-    else{
-      stop(); delay(1000); //stop a bit
-      moveBackwards(); delay(500) // move backwards very lil
-/*
-      // edge ahead or at left egde
-      if( (left_d > EDGE_DISTANCE && right_d > EDGE_DISTANCE)) || (left_d > EDGE_DISTANCE && right_d > EDGE_DISTANCE)) ){
-        turnRight(); delay(5000); // turn away from edge
-      }
-      else if(left_d <= EDGE_DISTANCE && right_d > EDGE_DISTANCE){
-        turnLeft(); delay(5000);
-      }
-*/
-    }// end ELSE
+    // edge at left
+    else if (left_d > EDGE_DISTANCE && right_d <= EDGE_DISTANCE){
+      Serial.print("Egde LEFT! -> ");
+      turnRight(); delay(5000); // turn away from edge
+    }
+    //edge at right
+    else if(left_d <= EDGE_DISTANCE && right_d > EDGE_DISTANCE){
+      Serial.print("Egde RIGHT! -> ");
+      turnLeft(); delay(5000);
+    }
+
+    
+  }
 }
 
 
 /* ***********************************************************
- * VL53L0X / EDGE DETECTION TEST FUNCTIONS
+ * VL53L0X / EDGE DETECTION FUNCTIONS
  *************************************************************/
-
 void testTOFsensors(){
-  if (right_
-TOF.isRangeComplete() && left_TOF.isRangeComplete() ) {
-    Serial.print("RIGHT Distance in mm: ");
-    Serial.print(right_
-  TOF.readRange());
 
-    Serial.print(" | LEFT Distance in mm: ");
-    Serial.println(left_TOF.readRange());
+  uint16_t left_d;
+  uint16_t right_d;
+
+  if ( !readTOFs() ){
+    return;  
+  }  
+  Serial.print("RIGHT Distance in mm: ");
+  Serial.print(right_TOF.readRangeResult());
+
+  Serial.print(" | LEFT Distance in mm: ");
+  Serial.println(left_TOF.readRangeResult());
+  
+}
+/* There are 2 sensors to check
+ * This functions handles checking that both TOFs are ready at the same time
+ */
+bool readTOFs() {
+  if (!left_TOF.isRangeComplete() ||
+      !right_TOF.isRangeComplete()) {
+    return false;
   }
+  return true;
 }
 
 
@@ -184,8 +197,8 @@ void moveForward(){
   digitalWrite(MOTOR_B_IN_3, LOW);
   digitalWrite(MOTOR_B_IN_4, HIGH);
 
-  ledcWrite(EN_A, MOTOR_SPEED);
-  ledcWrite(EN_B, MOTOR_SPEED);
+  ledcWrite(EN_A, MOTOR_SPEED_MAX);
+  ledcWrite(EN_B, MOTOR_SPEED_MAX);
 
   Serial.println("Moving Forward");
 }
@@ -195,8 +208,8 @@ void moveBackwards(){
   digitalWrite(MOTOR_B_IN_3, HIGH);
   digitalWrite(MOTOR_B_IN_4, LOW);
 
-  ledcWrite(EN_A, MOTOR_SPEED);
-  ledcWrite(EN_B, MOTOR_SPEED);
+  ledcWrite(EN_A, MOTOR_SPEED_MIN);
+  ledcWrite(EN_B, MOTOR_SPEED_MIN);
 
   Serial.println("Moving Backwards");
 
@@ -209,8 +222,8 @@ void turnRight(){
   digitalWrite(MOTOR_B_IN_3, LOW);
   digitalWrite(MOTOR_B_IN_4, HIGH);
 
-  ledcWrite(EN_A, MOTOR_SPEED);
-  ledcWrite(EN_B, MOTOR_SPEED);
+  ledcWrite(EN_A, MOTOR_SPEED_MAX);
+  ledcWrite(EN_B, MOTOR_SPEED_MAX);
 
   Serial.println("Turning Right");
 }
@@ -222,8 +235,8 @@ void turnLeft(){
   digitalWrite(MOTOR_B_IN_3, HIGH);
   digitalWrite(MOTOR_B_IN_4, LOW);
 
-  ledcWrite(EN_A, MOTOR_SPEED);
-  ledcWrite(EN_B, MOTOR_SPEED);
+  ledcWrite(EN_A, MOTOR_SPEED_MAX);
+  ledcWrite(EN_B, MOTOR_SPEED_MAX);
 
   Serial.println("Turning Left");
 }
@@ -257,4 +270,3 @@ void testMotorMovement(){
   testTOFsensors();
   delay(7000);
 }
-
