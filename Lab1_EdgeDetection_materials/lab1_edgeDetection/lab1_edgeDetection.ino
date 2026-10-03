@@ -15,10 +15,11 @@ TwoWire I2C_L = TwoWire(1);
 
 Adafruit_VL53L0X right_TOF;// = Adafruit_VL53L0X();
 Adafruit_VL53L0X left_TOF; // 
-Adafruit_VL53L0X::VL53L0X_Sense_config_t sensor_configR = Adafruit_VL53L0X::VL53L0X_SENSE_HIGH_ACCURACY;
-Adafruit_VL53L0X::VL53L0X_Sense_config_t sensor_configL = Adafruit_VL53L0X::VL53L0X_SENSE_HIGH_ACCURACY;
+Adafruit_VL53L0X::VL53L0X_Sense_config_t sensor_configR = Adafruit_VL53L0X::VL53L0X_SENSE_HIGH_SPEED;
+Adafruit_VL53L0X::VL53L0X_Sense_config_t sensor_configL = Adafruit_VL53L0X::VL53L0X_SENSE_HIGH_SPEED;
+// VL53L0X_SENSE_HIGH_ACCURACY   VL53L0X_SENSE_LONG_RANGE   VL53L0X_SENSE_DEFAULT 
 
-const int EDGE_DISTANCE = 70; // sensor are 40-50mm away
+const int EDGE_DISTANCE = 65; // sensor are 40-50mm away
 
 /* ***********************************************************
  * MOTOR CONTROL VARIABLES
@@ -136,7 +137,7 @@ void testEdge(){
     // edge ahead 
     if (left_d > EDGE_DISTANCE && right_d > EDGE_DISTANCE){ 
       Serial.print("Egde Ahead! -> ");
-      //moveBackwards(); delay(300);
+      moveBackwards(); delay(300); // only time it should be 100% safe
       //stop();          delay(300);
       turnRight(); delay(TURN_TIME); // turn away from edge
     }
