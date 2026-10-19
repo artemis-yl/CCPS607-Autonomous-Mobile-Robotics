@@ -15,11 +15,12 @@ TwoWire I2C_L = TwoWire(1);
 
 Adafruit_VL53L0X right_TOF;// = Adafruit_VL53L0X();
 Adafruit_VL53L0X left_TOF; // 
-Adafruit_VL53L0X::VL53L0X_Sense_config_t sensor_configR = Adafruit_VL53L0X::VL53L0X_SENSE_HIGH_SPEED;
-Adafruit_VL53L0X::VL53L0X_Sense_config_t sensor_configL = Adafruit_VL53L0X::VL53L0X_SENSE_HIGH_SPEED;
-// VL53L0X_SENSE_HIGH_ACCURACY   VL53L0X_SENSE_LONG_RANGE   VL53L0X_SENSE_DEFAULT 
+Adafruit_VL53L0X::VL53L0X_Sense_config_t sensor_configR = Adafruit_VL53L0X::VL53L0X_SENSE_DEFAULT;
+Adafruit_VL53L0X::VL53L0X_Sense_config_t sensor_configL = Adafruit_VL53L0X::VL53L0X_SENSE_DEFAULT;
+// VL53L0X_SENSE_HIGH_ACCURACY   VL53L0X_SENSE_LONG_RANGE   VL53L0X_SENSE_DEFAULT VL53L0X_SENSE_HIGH_SPEED
+// high speed too inaacurate. high acc too slow
 
-const int EDGE_DISTANCE = 65; // sensor are 40-50mm away
+const int EDGE_DISTANCE = 75; // sensor are 40-50mm away
 
 /* ***********************************************************
  * MOTOR CONTROL VARIABLES
@@ -40,9 +41,9 @@ const int FREQ = 30000;        // PWM FREQuency
 const int PWM_CHANNEL_A = 0; // PWM channel for motor A, 0-15
 const int PWM_CHANNEL_B = 1; // PWM channel for motor B, 0-15
 const int RESOLUTION = 8;    // 1-16bits. 8bit -> 0-255 duty cycle
-const int MOTOR_SPEED_MAX = 195; // duty cycle = 0 - 255. @ 5v this is good
-const int RIGHT_PLUS = MOTOR_SPEED_MAX +5;
-const int MOTOR_SPEED_MIN = 160;   // testing shows both can go from min 130 @ 9V, but 5V needs more
+const int MOTOR_SPEED_MAX = 205; // duty cycle = 0 - 255. @ 5v this is good
+const int RIGHT_PLUS = MOTOR_SPEED_MAX + 5;
+const int MOTOR_SPEED_TURN = MOTOR_SPEED_MAX - 5;   // testing shows both can go from min 130 @ 9V, but 5V needs more
 const int TURN_TIME = 500;
 
 
@@ -136,9 +137,7 @@ void testEdge(){
 
     // edge ahead 
     if (left_d > EDGE_DISTANCE && right_d > EDGE_DISTANCE){ 
-      Serial.print("Egde Ahead! -> ");
-      moveBackwards(); delay(300); // only time it should be 100% safe
-      //stop();          delay(300);
+      Serial.print("Egde Ahead! -> ");      
       turnRight(); delay(TURN_TIME); // turn away from edge
     }
     // edge at left
@@ -151,6 +150,8 @@ void testEdge(){
       Serial.print("Egde RIGHT! -> ");
       turnLeft(); delay(TURN_TIME);
     }
+
+    stop();          delay(100);
 
     
   }
@@ -226,8 +227,8 @@ void turnRight(){
   digitalWrite(MOTOR_B_IN_3, LOW);
   digitalWrite(MOTOR_B_IN_4, HIGH);
 
-  ledcWrite(EN_A_R, RIGHT_PLUS);
-  ledcWrite(EN_B_L, MOTOR_SPEED_MAX);
+  ledcWrite(EN_A_R, MOTOR_SPEED_TURN+4);
+  ledcWrite(EN_B_L, MOTOR_SPEED_TURN);
 
   Serial.println("Turning Right");
 }
@@ -239,8 +240,8 @@ void turnLeft(){
   digitalWrite(MOTOR_B_IN_3, HIGH);
   digitalWrite(MOTOR_B_IN_4, LOW);
 
-  ledcWrite(EN_A_R, RIGHT_PLUS);
-  ledcWrite(EN_B_L, MOTOR_SPEED_MAX);
+  ledcWrite(EN_A_R, MOTOR_SPEED_TURN+4);
+  ledcWrite(EN_B_L, MOTOR_SPEED_TURN);
 
   Serial.println("Turning Left");
 }
@@ -258,7 +259,7 @@ void stop() {
 }
 
 void slowDown( int dutyCycle ){
-  while (dutyCycle >= MOTOR_SPEED_MIN){
+  while (dutyCycle >= MOTOR_SPEED_MAX-30){
     ledcWrite(EN_A_R, dutyCycle);
     ledcWrite(EN_B_L, dutyCycle);
     Serial.print(">> Speed is: "); Serial.println(dutyCycle);
