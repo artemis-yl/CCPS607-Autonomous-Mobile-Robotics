@@ -25,10 +25,10 @@ Adafruit_VL53L0X::VL53L0X_Sense_config_t sensor_configL = Adafruit_VL53L0X::VL53
 
 bool isEdge = false;
 
-const int MAX_EDGE_DISTANCE = 65; // sensor are 40-50mm away
+const int MAX_EDGE_DISTANCE = 75; // sensor are 40-50mm away
 const unsigned long EDGE_TURN_TIME = 500;
-unsigned long last_edge_time = 0;
-
+unsigned long last_edge_time = 0; //max unsign long 4,294,967,295
+ 
 /* ***********************************************************
  * MOTOR CONTROL VARIABLES
  *************************************************************/
@@ -48,15 +48,15 @@ const int FREQ = 30000;        // PWM FREQuency
 const int PWM_CHANNEL_A = 0; // PWM channel for motor A, 0-15
 const int PWM_CHANNEL_B = 1; // PWM channel for motor B, 0-15
 const int RESOLUTION = 8;    // 1-16bits. 8bit -> 0-255 duty cycle
-const int MOTOR_SPEED_MAX = 195; // duty cycle = 0 - 255. @ 5v this is good
-const int RIGHT_PLUS = MOTOR_SPEED_MAX +5;
-const int MOTOR_SPEED_MIN = 160;   // testing shows both can go from min 130 @ 9V, but 5V needs more
-//const int TURN_TIME = 500;
+const int MOTOR_SPEED_MAX = 205; // duty cycle = 0 - 255. @ 5v this is good
+const int RIGHT_PLUS = MOTOR_SPEED_MAX + 5; // testing shows both can go from min 130 @ 9V, but 5V needs more
+const int MOTOR_SPEED_TURN = MOTOR_SPEED_MAX - 5;   
 
 /* ***********************************************************
  * GENERIC TIME VARIABLES
  *************************************************************/
- const int STOP_TIME = 300;
+const int STOP_TIME = 500;
+bool alreadyStopped = false;
 
 
 void setup() {
@@ -133,28 +133,35 @@ void loop() {
   //edge detected
   else{
     if (!isEdge) // edge detected 1st time
-      last_edge_time = millis() + STOP_TIME;
+      last_edge_time = now_milli; //millis() + STOP_TIME;
     isEdge = true;
   }
   // should it be turning away from an edge right now? yes, if less than turn time passed
   bool isEdgeTurnPeriod = (now_milli - last_edge_time < EDGE_TURN_TIME) ? true : false;
+  // since 1000 delay at setup, always at least (1000-0=1000) at beginning with no edge
 
   // obstacle logic
 
   
 
-  // stop
-  if (isEdge ){ // && noObstacle == false
+  
+  // move forward IF no edge and no longer in edge turning AND no obstacle 
+  if (!isEdge && !isEdgeTurnPeriod) {// && noObstacle
+    moveForward();
+    alreadyStopped = false;
+  } 
+  //stop
+  // - if edge and havent stopped already
+  // - if edge and not turning and stopped already i.e. need to stop again
+  else if (isEdge && (!alreadyStopped || !isEdgeTurnPeriod && alreadyStopped ){ // || noObstacle == false
     //noObstacle = false;
     stop();  delay(STOP_TIME);
+    alreadyStopped = true;
   }
-  // move forward IF no edge and no longer in edge turning AND no obstacle 
-  else if (!isEdge && !isEdgeTurnPeriod) {// && noObstacle
-    moveForward();
-  } 
+
   // turn right
   // - edge was detected in front or at left, turning time
-  if ((isEdge && isEdgeTurnPeriod && left_d > MAX_EDGE_DISTANCE) ){
+  if ((isEdgeTurnPeriod && left_d > MAX_EDGE_DISTANCE) ){
     turnRight();
     if(right_d > MAX_EDGE_DISTANCE)
       Serial.print("Edge Ahead! -> ");
@@ -163,9 +170,9 @@ void loop() {
   }
   // turn left
   // - edge was detected in right, turning time
-  if ((isEdge && isEdgeTurnPeriod && left_d <= MAX_EDGE_DISTANCE && right_d > MAX_EDGE_DISTANCE) ){
+  else if ((isEdgeTurnPeriod && left_d <= MAX_EDGE_DISTANCE && right_d > MAX_EDGE_DISTANCE) ){
     turnLeft();
-    Serial.print("Egde RIGHT! -> ");
+    Serial.print("Edge RIGHT! -> ");
   }
 
 /*
@@ -315,7 +322,7 @@ void stop() {
 }
 
 void slowDown( int dutyCycle ){
-  while (dutyCycle >= MOTOR_SPEED_MIN){
+  while (dutyCycle >= MOTOR_SPEED_MAX-30){
     ledcWrite(EN_A_R, dutyCycle);
     ledcWrite(EN_B_L, dutyCycle);
     Serial.print(">> Speed is: "); Serial.println(dutyCycle);
