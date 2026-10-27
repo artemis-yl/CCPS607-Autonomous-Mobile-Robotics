@@ -4,9 +4,14 @@
 #include <Wire.h>
 #include "Adafruit_VL53L0X.h"
 // 5V
-#define SDA 21 
-#define SCL 22
+//#define SDA 21 
+//#define SCL 22
 
+#define SDA 18 
+#define SCL 19
+TwoWire I2C_O = TwoWire(1);
+
+//#define VL53L0X_I2C_ADDR 0x29
 #define TOF_L_ADDRESS 0x30
 #define TOF_R_ADDRESS 0x31
 #define TOF_O_ADDRESS 0x32
@@ -14,14 +19,14 @@
 // set the pins to shutdown
 #define SHT_L 23
 #define SHT_R 15
-#define SHT_O 4
+#define SHT_O 19
 
 // objects for the vl53l0x
 Adafruit_VL53L0X left_TOF; // 
 Adafruit_VL53L0X right_TOF;//
 Adafruit_VL53L0X obst_TOF; // 
 
-//Adafruit_VL53L0X::VL53L0X_Sense_config_t sensor_config = Adafruit_VL53L0X::VL53L0X_SENSE_DEFAULT;
+Adafruit_VL53L0X::VL53L0X_Sense_config_t sensor_config = Adafruit_VL53L0X::VL53L0X_SENSE_DEFAULT;
 // VL53L0X_SENSE_HIGH_ACCURACY   VL53L0X_SENSE_LONG_RANGE   VL53L0X_SENSE_DEFAULT VL53L0X_SENSE_HIGH_SPEED
 // high speed too inaacurate. high acc too slow
 
@@ -53,8 +58,8 @@ bool isCW = true;
 
 // ULTRASONIC
 // 5V
-#define TRIG_PIN 18
-#define ECHO_PIN 5 
+#define TRIG_PIN 4
+#define ECHO_PIN 2 
 float ultrasonic_d;
 
 #define OBSTACLE_DISTANCE 200 // apply both for TOF and ultrasonic
@@ -102,9 +107,9 @@ void setup_obsAvoidance(){
   pinMode(ECHO_PIN, INPUT);
 
   // set servo input pin
-  servo.attach(SERVO_PIN);
+  //servo.attach(SERVO_PIN);
   // set it to face forward/centre/90deg
-  servo.write(pos);
+  //servo.write(pos);
 }
 
 void setup_tof(){
@@ -118,22 +123,36 @@ void setup_tof(){
   //digitalWrite(SHT_O, LOW);
   Serial.println(F("Both in reset mode...(pins are low)"));
 /*
+  I2C_O.begin(SDA, SCL, 100000);
+
   // initialize 1 I2C buses for OBS using default 
-  if (!obst_TOF.begin() ) {
+  if (!obst_TOF.begin(VL53L0X_I2C_ADDR, false, &I2C_O, sensor_config) ) {
     Serial.println("Could not find a valid VL53L0X_obs sensor, check wiring!");
     while (1);
   }
   Serial.println(F("Booted OBSTACLE VL53L0X successfully!"));
-  delay(10);  */
-  
+  delay(10);  
+  */
   // all reset
   digitalWrite(SHT_L, LOW);    
   digitalWrite(SHT_R, LOW);
-  digitalWrite(SHT_O, LOW);
+  //digitalWrite(SHT_O, LOW);
   delay(10);
+
+  // activating OBS
+  digitalWrite(SHT_O, HIGH);
+  delay(10);
+  if(!obst_TOF.begin(TOF_O_ADDRESS)) {
+    Serial.println(F("Failed to boot OBSTACLE VL53L0X"));
+    while(1);
+  }
+  Serial.println(F("Booted OBSTACLE VL53L0X successfully!"));
+  delay(10);
+  
 
   // activating RIGHT
   digitalWrite(SHT_R, HIGH);
+  digitalWrite(SHT_L, LOW);    
   delay(10);
   if(!right_TOF.begin(TOF_R_ADDRESS)) {
     Serial.println(F("Failed to boot RIGHT VL53L0X"));
@@ -152,15 +171,7 @@ void setup_tof(){
   Serial.println(F("Booted LEFT VL53L0X successfully!"));
   delay(10);
 
-   // activating OBS
-  digitalWrite(SHT_O, HIGH);
-  delay(10);
-  if(!obst_TOF.begin(TOF_O_ADDRESS)) {
-    Serial.println(F("Failed to boot OBSTACLE VL53L0X"));
-    while(1);
-  }
-  Serial.println(F("Booted OBSTACLE VL53L0X successfully!"));
-  delay(10);
+   
   
   // start continuous ranging
   left_TOF.startRangeContinuous();
@@ -215,7 +226,7 @@ void setup() {
   Serial.println("Obstacle Avoidance sensors are set up!");
 
 
-  Serial.println("----- Wait 3 seconds...   ------- ----------------"); 
+  Serial.println("----- Wait 5 seconds...   ------- ----------------"); 
   delay(5000); // let me react
 }
 
@@ -236,12 +247,12 @@ void loop() {
   */
 
   obst_d = obst_TOF.readRangeResult();
-  obst_d = (obst_TOF.readRangeResult() + obst_d) / 2.0;
-  Serial.print(" | TOF: "); Serial.print(obst_d); Serial.println(" m");
+  //obst_d = (obst_TOF.readRangeResult() + obst_d) / 2.0;
+  Serial.print(" | TOF: "); Serial.print(obst_d); Serial.println(" mm");
 
-  ultrasonic_d = pingUltrasonic();
-  ultrasonic_d = (pingUltrasonic() + ultrasonic_d) / 2.0;
-  Serial.print(" | USD: "); Serial.print(ultrasonic_d); Serial.println(" mm");
+  ultrasonic_d = pingUltrasonic() * 10;
+  //ultrasonic_d = (pingUltrasonic() + ultrasonic_d) / 2.0;
+  Serial.print(" | USD: "); Serial.print(ultrasonic_d); Serial.println("mm");
 
   /*if(obst_d <= OBSTACLE_DISTANCE || ultrasonic_d <= OBSTACLE_DISTANCE){
     obstacleState = OBSTACLE_TURNING;
@@ -257,7 +268,7 @@ void loop() {
   }*/
   // === END OBSTACLE AVOIDANCE LOGIC  ==================================================
 
-
+/*
   if(pos < 140 && isCW){
     pos += 10;
     //Serial.println("Servo turns CW");
@@ -277,7 +288,7 @@ void loop() {
   Serial.print("pos is: "); Serial.println(pos);
   //Serial.print(" | time is: "); Serial.println(now);
   servo.write(pos);
-
+*/
   //}
   
   
@@ -305,7 +316,9 @@ void loop() {
   // === END EGDE DETECTION LOGIC =======================================================
 
 
-  if (left_d <= EDGE_DISTANCE && right_d <= EDGE_DISTANCE) {
+  if (left_d <= EDGE_DISTANCE && right_d <= EDGE_DISTANCE &&
+      obst_d > OBSTACLE_DISTANCE && ultrasonic_d > OBSTACLE_DISTANCE
+  ) {
     moveForward();
   } 
   else {
@@ -332,6 +345,11 @@ void loop() {
       Serial.print("Edge RIGHT! -> ");
       //turnRightForEdge = false;
       turnLeft();
+    }
+    else if(obst_d <= OBSTACLE_DISTANCE || ultrasonic_d <= OBSTACLE_DISTANCE){
+      Serial.print("OBJECT? -> ");
+      //turnRightForEdge = true;
+      turnRight();
     }
   }//stop edge turn ELSE
 
@@ -381,7 +399,7 @@ float pingUltrasonic(){
   // measure duration of pulse from ECHO pin
   float duration_us = pulseIn(ECHO_PIN, HIGH);
   // calculate the distance
-  float distance_mm = 0.017 * duration_us * 100;
+  float distance_mm = 0.017 * duration_us ;
 
   return distance_mm;
 }
