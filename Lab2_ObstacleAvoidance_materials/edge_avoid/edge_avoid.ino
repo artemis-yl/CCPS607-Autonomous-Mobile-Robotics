@@ -270,11 +270,11 @@ void loop() {
   // === END OBSTACLE AVOIDANCE LOGIC  ==================================================
 
 */
-  if(pos < 150 && isCW){
+  if(pos < 140 && isCW){
     pos += 10;
     //Serial.println("Servo turns CW");
   }
-  else if (pos == 150 && isCW){
+  else if (pos == 140 && isCW){
     isCW = false;
     pos -= 10;
   }
