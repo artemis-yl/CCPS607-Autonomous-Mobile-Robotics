@@ -4,8 +4,8 @@
 #include <Wire.h>
 #include "Adafruit_VL53L0X.h"
 // 5V
-//#define SDA 21 
-//#define SCL 22
+//#define SDA 21 //BLUE
+//#define SCL 22 //GREEN
 
 #define SDA 18 
 #define SCL 19
@@ -30,8 +30,8 @@ Adafruit_VL53L0X::VL53L0X_Sense_config_t sensor_config = Adafruit_VL53L0X::VL53L
 // VL53L0X_SENSE_HIGH_ACCURACY   VL53L0X_SENSE_LONG_RANGE   VL53L0X_SENSE_DEFAULT VL53L0X_SENSE_HIGH_SPEED
 // high speed too inaacurate. high acc too slow
 
-const int EDGE_DISTANCE = 70; // sensor are 35-40mm away
-const unsigned long EDGE_STOP_TIME = 300;
+const int EDGE_DISTANCE = 65; // sensor are 35-40mm away
+const unsigned long EDGE_STOP_TIME = 250;
 const unsigned long POST_TURN_STOP_TIME = 100;
 const int TURN_TIME = 900;
 
@@ -90,32 +90,35 @@ uint16_t obst_d = 0;
 #define EN_B_L       32  // EN_B_L pin
 
 // PWM properties
-const int FREQ = 30000;      // PWM FREQuency
+const int FREQ = 30000;      // PWM FREQuency 30000 w/ 190, just make sure turns have extra 5
 const int PWM_CHANNEL_A = 1; // PWM channel for motor A, 0-15
 const int PWM_CHANNEL_B = 2; // PWM channel for motor B, 0-15
 const int RESOLUTION = 8;    // 1-16bits. 8bit -> 0-255 duty cycle
-const int MOTOR_SPEED_MAX = 205; // duty cycle = 0 - 255. @ 5v this is good
-const int RIGHT_PLUS = MOTOR_SPEED_MAX + 5;
-const int MOTOR_SPEED_TURN = MOTOR_SPEED_MAX - 5;   // testing shows both can go from min 130 @ 9V, but 5V needs more
-
+const int MOTOR_SPEED_MAX = 190; // duty cycle = 0 - 255. @ 5v this is good
+const int LEFT_PLUS = MOTOR_SPEED_MAX;
+const int MOTOR_SPEED_TURN = MOTOR_SPEED_MAX+5;   // testing shows both can go from min 130 @ 9V, but 5V needs more
+// 205 bit too fast
 
 
 void setup_obsAvoidance(){
   // configure the trigger pin to output mode
-  pinMode(TRIG_PIN, OUTPUT);
+  //pinMode(TRIG_PIN, OUTPUT);
   // configure the echo pin to input mode
-  pinMode(ECHO_PIN, INPUT);
+  //pinMode(ECHO_PIN, INPUT);
 
   // set servo input pin
-  //servo.attach(SERVO_PIN);
+  servo.attach(SERVO_PIN);
   // set it to face forward/centre/90deg
-  //servo.write(pos);
+  servo.write(pos);
+  Serial.println(F("Pin is at {pos} - wait 2sec"));
+  delay(2000);
+
 }
 
 void setup_tof(){
   pinMode(SHT_L, OUTPUT);
   pinMode(SHT_R, OUTPUT);
-  pinMode(SHT_O, OUTPUT);
+  //pinMode(SHT_O, OUTPUT);
 
   Serial.println(F("Shutdown pins initiated..."));
   digitalWrite(SHT_L, LOW);
@@ -138,7 +141,7 @@ void setup_tof(){
   digitalWrite(SHT_R, LOW);
   //digitalWrite(SHT_O, LOW);
   delay(10);
-
+/*
   // activating OBS
   digitalWrite(SHT_O, HIGH);
   delay(10);
@@ -148,7 +151,7 @@ void setup_tof(){
   }
   Serial.println(F("Booted OBSTACLE VL53L0X successfully!"));
   delay(10);
-  
+  */
 
   // activating RIGHT
   digitalWrite(SHT_R, HIGH);
@@ -170,13 +173,11 @@ void setup_tof(){
   }
   Serial.println(F("Booted LEFT VL53L0X successfully!"));
   delay(10);
-
-   
   
   // start continuous ranging
   left_TOF.startRangeContinuous();
   right_TOF.startRangeContinuous();
-  obst_TOF.startRangeContinuous(); 
+  //obst_TOF.startRangeContinuous(); 
 }
 
 void setup_motors(){
@@ -205,7 +206,7 @@ void setup_motors(){
 void setup() {
   Serial.begin(115200);
   Serial.println("----- Starting Edge Detection RC !!! ----------------"); 
-  delay(500); // allow me to switch to serial monitor
+  delay(100); // allow me to switch to serial monitor
 
   /* ***********************************************************
    * MOTOR CONTROL SETUP
@@ -217,7 +218,7 @@ void setup() {
    * VL53L0X / EDGE DETECTION SETUP
    *************************************************************/
   setup_tof(); 
-  Serial.println("Both edge VL53L0X sensors are connected!"); 
+  //Serial.println("Both edge VL53L0X sensors are connected!"); 
 
   /* ***********************************************************
    * OBSTACLE AVOIDANCE SETUP
@@ -244,7 +245,7 @@ void loop() {
   if(obstacleState == OBSTACLE_TURNING){
     obstacleState = OBSTACLE_MONITORING
   }
-  */
+  
 
   obst_d = obst_TOF.readRangeResult();
   //obst_d = (obst_TOF.readRangeResult() + obst_d) / 2.0;
@@ -265,36 +266,36 @@ void loop() {
   // - check 180, 150, 120,  90,  60,  30,   0
   //           L    L    L    F    R    R    R
   // - turn to longest side, L or R, for ~ 1/2 turn time
-  }*/
+  }
   // === END OBSTACLE AVOIDANCE LOGIC  ==================================================
 
-/*
-  if(pos < 140 && isCW){
+*/
+  if(pos < 150 && isCW){
     pos += 10;
     //Serial.println("Servo turns CW");
   }
-  else if (pos == 140 && isCW){
+  else if (pos == 150 && isCW){
     isCW = false;
     pos -= 10;
   }
-  else if(pos > 40 && !isCW){
+  else if(pos > 30 && !isCW){
     pos -= 10;
     //Serial.println("Servo turns CCW");
   }
-  else if(pos == 40 && !isCW){
+  else if(pos == 30 && !isCW){
     isCW = true;
     pos += 10;
   }
   Serial.print("pos is: "); Serial.println(pos);
   //Serial.print(" | time is: "); Serial.println(now);
   servo.write(pos);
-*/
+
   //}
   
   
     // === EGDE DETECTION LOGIC ===========================================================
   if (edgeState == EDGE_TURNING) {
-    Serial.println(" ^ currently still turning!");
+    Serial.print(" ^ currently turning!");
     if (now - edgeStateStartedAt < TURN_TIME) {
       return;
     }
@@ -316,8 +317,8 @@ void loop() {
   // === END EGDE DETECTION LOGIC =======================================================
 
 
-  if (left_d <= EDGE_DISTANCE && right_d <= EDGE_DISTANCE &&
-      obst_d > OBSTACLE_DISTANCE && ultrasonic_d > OBSTACLE_DISTANCE
+  if (left_d <= EDGE_DISTANCE && right_d <= EDGE_DISTANCE //&&
+      //obst_d > OBSTACLE_DISTANCE && ultrasonic_d > OBSTACLE_DISTANCE
   ) {
     moveForward();
   } 
@@ -346,12 +347,16 @@ void loop() {
       //turnRightForEdge = false;
       turnLeft();
     }
+    /*
     else if(obst_d <= OBSTACLE_DISTANCE || ultrasonic_d <= OBSTACLE_DISTANCE){
       Serial.print("OBJECT? -> ");
       //turnRightForEdge = true;
       turnRight();
     }
+    */
   }//stop edge turn ELSE
+
+  
 
 }// END LOOP
 
@@ -440,8 +445,8 @@ void moveForward(){
   digitalWrite(MOTOR_B_IN_3, LOW);
   digitalWrite(MOTOR_B_IN_4, HIGH);
 
-  ledcWrite(EN_A_R, RIGHT_PLUS);
-  ledcWrite(EN_B_L, MOTOR_SPEED_MAX);
+  ledcWrite(EN_A_R, MOTOR_SPEED_MAX);
+  ledcWrite(EN_B_L, LEFT_PLUS);
 
   Serial.println("Moving Forward");
 }
@@ -451,8 +456,8 @@ void moveBackwards(){
   digitalWrite(MOTOR_B_IN_3, HIGH);
   digitalWrite(MOTOR_B_IN_4, LOW);
 
-  ledcWrite(EN_A_R, RIGHT_PLUS);
-  ledcWrite(EN_B_L, MOTOR_SPEED_MAX);
+  ledcWrite(EN_A_R, MOTOR_SPEED_MAX);
+  ledcWrite(EN_B_L, LEFT_PLUS);
 
   Serial.println("Moving Backwards");
 
@@ -465,7 +470,7 @@ void turnRight(){
   digitalWrite(MOTOR_B_IN_3, LOW);
   digitalWrite(MOTOR_B_IN_4, HIGH);
 
-  ledcWrite(EN_A_R, MOTOR_SPEED_TURN+4);
+  ledcWrite(EN_A_R, MOTOR_SPEED_TURN);
   ledcWrite(EN_B_L, MOTOR_SPEED_TURN);
 
   Serial.println("Turning Right");
@@ -478,7 +483,7 @@ void turnLeft(){
   digitalWrite(MOTOR_B_IN_3, HIGH);
   digitalWrite(MOTOR_B_IN_4, LOW);
 
-  ledcWrite(EN_A_R, MOTOR_SPEED_TURN+4);
+  ledcWrite(EN_A_R, MOTOR_SPEED_TURN);
   ledcWrite(EN_B_L, MOTOR_SPEED_TURN);
 
   Serial.println("Turning Left");
@@ -507,18 +512,13 @@ void slowDown( int dutyCycle ){
 
 void testMotorMovement(){
   moveForward();
-  testTOFsensors();
   delay(7000);
   moveBackwards();
-  testTOFsensors();
   delay(7000);
   turnRight();
-  testTOFsensors();
   delay(10000);
   turnLeft();
-  testTOFsensors();
   delay(10000);
   stop();
-  testTOFsensors();
   delay(7000);
 }
