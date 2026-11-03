@@ -59,7 +59,7 @@ unsigned long servoPrevMillis = 0;
 #define ECHO_PIN 2 // green
 float ultrasonic_d;
 
-#define OBSTACLE_DISTANCE 200 // apply both for TOF and ultrasonic
+#define OBSTACLE_DISTANCE 250 // apply both for TOF and ultrasonic
 enum ObstacleState {
   OBSTACLE_MONITORING,
   OBSTACLE_TURNING,
@@ -91,7 +91,7 @@ uint16_t obst_d = 0;
 #define PWM_CH_B2   15 
  
 const int SPEED_MAX = 220; // duty cycle = 0 - 255. @ 5v this is good
-const int SPEED_MIN = 185; // 
+const int SPEED_MIN = 187; // 
 int speed_now = SPEED_MIN; // 180 isnt enough for A/L
 int turn_speed = SPEED_MIN ;  
 
@@ -103,9 +103,15 @@ void setup_obsAvoidance(){
 
   // set servo input pin
   servo.attach(SERVO_PIN);
+
+  //build up the capacitors a bit first
+  for(int angle = 0; angle <=180; angle+=45){
+    servo.write(angle); delay(500);
+  }
+  
   // set it to face forward/centre/90deg
   servo.write(pos);
-  Serial.println(F("Pin is at {pos}"));
+  Serial.print(F("Pin is at ")); Serial.println(pos);
   //delay(2000);
 
   Serial.println("Obstacle Avoidance sensors are set up!");
@@ -129,12 +135,24 @@ void setup_tof(){
   digitalWrite(SHT_O, LOW);
   delay(10);
 
+  // activating LEFT
+  digitalWrite(SHT_L, HIGH);
+  delay(10);
+  while(!left_TOF.begin(TOF_L_ADDRESS)) {
+    Serial.println(F("Failed to boot LEFT VL53L0X"));
+    //while(1);
+  }
+  Serial.println(F("Booted LEFT VL53L0X successfully!"));
+  delay(10);
+
   // activating OBS
   digitalWrite(SHT_O, HIGH);
+  //digitalWrite(SHT_L, LOW);    
+  //digitalWrite(SHT_R, LOW);
   delay(10);
-  if(!obst_TOF.begin(TOF_O_ADDRESS)) {
+  while(!obst_TOF.begin(TOF_O_ADDRESS)) {
     Serial.println(F("Failed to boot OBSTACLE VL53L0X"));
-    while(1);
+    //while(1);
   }
   Serial.println(F("Booted OBSTACLE VL53L0X successfully!"));
   delay(10);
@@ -143,22 +161,13 @@ void setup_tof(){
   digitalWrite(SHT_R, HIGH);
   //digitalWrite(SHT_L, LOW);    
   delay(10);
-  if(!right_TOF.begin(TOF_R_ADDRESS)) {
+  while(!right_TOF.begin(TOF_R_ADDRESS)) {
     Serial.println(F("Failed to boot RIGHT VL53L0X"));
-    while(1);
+    //while(1);
   }
   Serial.println(F("Booted RIGHT VL53L0X successfully!"));
   delay(10);
 
-  // activating LEFT
-  digitalWrite(SHT_L, HIGH);
-  delay(10);
-  if(!left_TOF.begin(TOF_L_ADDRESS)) {
-    Serial.println(F("Failed to boot LEFT VL53L0X"));
-    while(1);
-  }
-  Serial.println(F("Booted LEFT VL53L0X successfully!"));
-  delay(10);
   
   // start continuous ranging
   left_TOF.startRangeContinuous();
@@ -210,8 +219,8 @@ void setup() {
    *************************************************************/
   setup_tof(); 
 
-  Serial.println("----- Wait 5 seconds...   ------- ----------------"); 
-  delay(5000); // let me react
+  Serial.println("----- Wait 4 seconds...   ------- ----------------"); 
+  delay(4000); // let me react
   
 }
 
@@ -221,12 +230,12 @@ void loop() {
 
   if (edgeState == EDGE_TURNING) {
     if (now - edgeStateStartedAt < TURN_TIME) {
-      Serial.print(" ^ currently turning!");
+      //Serial.print(F(" ^ currently turning! {now} - {edgeStateStartedAt} = {now - edgeStateStartedAt}"));
       return;
     }
     else{
       stop(); delay(100);
-      Serial.print(" ^ Stopped turning!");
+      //Serial.print(" ^ Stopped turning!");
       edgeState = EDGE_MONITORING;
       edgeStateStartedAt = now;
       return;
@@ -239,27 +248,24 @@ void loop() {
 
     if(pos < (90+POS_ANG) && isCW){
       pos += POS_INC;
-      servo.write(pos);
     } else if (pos == (90+POS_ANG) && isCW){
       isCW = false;
       pos += POS_INC;
-      servo.write(pos);
     } else if(pos > (90-POS_ANG) && !isCW){
       pos -= POS_INC;
-      servo.write(pos);
     } else if(pos == (90-POS_ANG) && !isCW){
       isCW = true;
       pos -= POS_INC;
-      servo.write(pos);
     }
+    servo.write(pos);
   }
-  Serial.print("pos is: "); Serial.print(pos);
+  //Serial.print("pos is: "); Serial.print(pos);
 
   // get the distances measured by the obstacle detectors
   obst_d = getObstacleToFDistance(); 
-  Serial.print(" | TOF: "); Serial.print(obst_d); Serial.print(" mm");
+  //Serial.print(" | TOF: "); Serial.print(obst_d); Serial.print(" mm");
   ultrasonic_d = pingUltrasonic();
-  Serial.print(" | USD: "); Serial.print(ultrasonic_d); Serial.println("mm");
+  //Serial.print(" | USD: "); Serial.print(ultrasonic_d); Serial.println("mm");
   // === END OBSTACLE AVOIDANCE LOGIC  ==================================================
     
   // === EGDE DETECTION LOGIC ===========================================================
@@ -271,8 +277,8 @@ void loop() {
   }
   uint16_t left_d = left_TOF.readRangeResult();
   uint16_t right_d = right_TOF.readRangeResult();
-  Serial.print("Right: ");  Serial.print(right_d);  
-  Serial.print(" mm, Left: ");  Serial.print(left_d);  Serial.print(" mm ==> ");
+  //Serial.print("Right: ");  Serial.print(right_d);  
+  //Serial.print(" mm, Left: ");  Serial.print(left_d);  Serial.print(" mm ==> ");
   // === END EGDE DETECTION LOGIC =======================================================
 
   if (left_d <= EDGE_DISTANCE && right_d <= EDGE_DISTANCE &&
@@ -283,45 +289,62 @@ void loop() {
   else {
     Serial.print(" ! STOP ! : ");
     stop(); delay(EDGE_STOP_TIME);
+    //Serial.print("Now is "); Serial.print(now);
+    //Serial.print("edgeStateStartedAt is "); Serial.println(edgeStateStartedAt);
+
+
+    float distanceR = checkRight();//1400
+    //servo.write(90); delay(500);
+    float distanceL = checkLeft();//1400
 
     edgeState = EDGE_TURNING;
-    edgeStateStartedAt = now;
+    edgeStateStartedAt = now + 2800;
+    //Serial.print("After checks, Now is "); Serial.print(now);
+    //Serial.print("edgeStateStartedAt is "); Serial.println(edgeStateStartedAt);
 
     // edge ahead 
     if (left_d > EDGE_DISTANCE && right_d > EDGE_DISTANCE){ 
       Serial.print("Edge Ahead! -> ");
-      //turnRightForEdge = true;
-      turnRight(speed_now);
+
+      //make sure safe to turn right from edge
+      if (distanceR > OBSTACLE_DISTANCE)
+        turnRight(speed_now);
+      else
+        turnLeft(speed_now);
     }
     // edge at left
     else if (left_d > EDGE_DISTANCE && right_d <= EDGE_DISTANCE){
       Serial.print("Edge LEFT! -> ");
-      //turnRightForEdge = true;
-      turnRight(speed_now);
+      //make sure safe to turn right from edge
+      if (distanceR > OBSTACLE_DISTANCE)
+        turnRight(speed_now);
+      else
+        turnLeft(speed_now);
     }
     //edge at right
     else if(left_d <= EDGE_DISTANCE && right_d > EDGE_DISTANCE){
       Serial.print("Edge RIGHT! -> ");
-      //turnRightForEdge = false;
       turnLeft(speed_now);
+
+      //make sure safe to turn right from edge
+      if (distanceL > OBSTACLE_DISTANCE)
+        turnLeft(speed_now);
+      else
+        turnRight(speed_now);
     } 
     // object detected
     else if(obst_d <= OBSTACLE_DISTANCE || ultrasonic_d <= OBSTACLE_DISTANCE){
-      Serial.print("OBJECT found at: "); Serial.print(pos);
+      Serial.print("OBJECT found at: "); Serial.println(pos);
+      //Serial.print(" | left: "); Serial.print(distanceL); 
+      //Serial.print(" | right: "); Serial.println(distanceR); 
+      pos = 90;
 
-      float distanceR = look(0); //700
-      servo.write(90); delay(500);
-      float distanceL = look(180); //700
-
-      edgeStateStartedAt += 1900; // 700*2=1400 from looks + 500 after moving to 90
-
-      Serial.print(" | left: "); Serial.print(distanceL); 
-      Serial.print(" | right: "); Serial.println(distanceR); 
-
-      if (distanceR >= distanceL)
+      if (distanceR >= distanceL && distanceR > OBSTACLE_DISTANCE)
         turnRight(speed_now);
-      else
+      else if (distanceL >= distanceR && distanceL > OBSTACLE_DISTANCE)
         turnLeft(speed_now);
+      else
+        moveBackwards(speed_now);
     }
   }//stop edge turn ELSE
 
@@ -367,6 +390,18 @@ float look(int angle){
   float distance = min(US, tof );
   delay(200);
   return distance;
+}
+float checkRight(){
+  float r1 = look(0); //700
+  float r2 = look(20); //700
+  float distanceR = min(r1, r2);
+  return distanceR;
+}
+float checkLeft(){
+  float l1 = look(160); //700
+  float l2 = look(180); //700
+  float distanceL = min(l1, l2); 
+  return distanceL;
 }
 
 int getObstacleToFDistance(){
