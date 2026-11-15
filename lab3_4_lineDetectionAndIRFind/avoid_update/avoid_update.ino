@@ -71,6 +71,24 @@ uint16_t obst_d = 0;
 
 
 /* ***********************************************************
+ * LINE FOLLOWING VARIABLES
+ *************************************************************/
+#define L_IR_DIGITAL_PIN 35 // ESP32 pin GPIO18 connected to OUT pin of IR obstacle avoidance sensor
+#define L_IR_ANALOG_PIN 34
+#define R_IR_DIGITAL_PIN 33 // ESP32 pin GPIO18 connected to OUT pin of IR obstacle avoidance sensor
+#define R_IR_ANALOG_PIN 32
+
+const int LEFT_THRESHOLD = 2000;
+const int RIGHT_THRESHOLD = 2000;
+
+int L_lineDigital, L_lineAnalog, R_lineDigital, R_lineAnalog;
+bool lineFound = false;
+
+bool leftOnLine = false;
+bool rightOnLine = false;
+
+
+/* ***********************************************************
  * MOTOR CONTROL VARIABLES
  *************************************************************/
 // - MotorA is LEFT | MotorB is RIGHT 
@@ -94,6 +112,20 @@ const int SPEED_MAX = 220; // duty cycle = 0 - 255. @ 5v this is good
 const int SPEED_MIN = 187; // 
 int speed_now = SPEED_MIN; // 180 isnt enough for A/L
 int turn_speed = SPEED_MIN ;  
+
+
+
+void setup_lineIR(){
+  pinMode(L_IR_DIGITAL_PIN, INPUT);
+  analogReadResolution(12); // ESP32 default: 0 to 4095
+  analogSetPinAttenuation(L_IR_ANALOG_PIN, ADC_11db);
+
+  pinMode(R_IR_DIGITAL_PIN, INPUT);
+  analogReadResolution(12); // ESP32 default: 0 to 4095
+  analogSetPinAttenuation(R_IR_ANALOG_PIN, ADC_11db);
+
+  Serial.println("Line IR sensors are set up!");
+}
 
 void setup_obsAvoidance(){
   // configure the trigger pin to output mode
@@ -220,6 +252,8 @@ void setup() {
    *************************************************************/
   setup_tof(); 
 
+  setup_lineIR();
+
   Serial.println("----- Wait 4 seconds...   ------- ----------------"); 
   delay(4000); // let me react
   
@@ -278,14 +312,40 @@ void loop() {
   }
   uint16_t left_d = left_TOF.readRangeResult();
   uint16_t right_d = right_TOF.readRangeResult();
-  Serial.print("Right: ");  Serial.print(right_d);  
-  Serial.print(" mm, Left: ");  Serial.print(left_d);  Serial.print(" mm ==> ");
+  //Serial.print("Right: ");  Serial.print(right_d);  
+  //Serial.print(" mm, Left: ");  Serial.print(left_d);  Serial.print(" mm ==> ");
   // === END EGDE DETECTION LOGIC =======================================================
 
   if (left_d <= EDGE_DISTANCE && right_d <= EDGE_DISTANCE 
       //&& obst_d > OBSTACLE_DISTANCE && ultrasonic_d > OBSTACLE_DISTANCE
   ) {
     moveForward(speed_now);
+
+    // do line follower logic here
+
+    getLineIR();
+
+    //LeftOnLine = isOnLine();
+    //rightOnLine = false;
+    
+    /*
+    if not onLine i.e. not following a line yet
+    - if either L or R detect black line
+      - delay(100); // foward
+      - while (l is off)
+      -   turnLeft(speed);
+      - if L is on, 
+          while (L is on) turnLeft
+      - forward
+        online = true;
+
+    if onLine is true
+      if left and not right -> turn left()
+      if not left and right -> turn right()
+      // ignore other states for now
+      
+    */
+
   } 
   else {
     Serial.print(" ! STOP ! : ");
@@ -293,15 +353,12 @@ void loop() {
     //Serial.print("Now is "); Serial.print(now);
     //Serial.print("edgeStateStartedAt is "); Serial.println(edgeStateStartedAt);
 
-
     //float distanceR = checkRight();//1400
     //servo.write(90); delay(500);
     //float distanceL = checkLeft();//1400
 
     edgeState = EDGE_TURNING;
     edgeStateStartedAt = now ;//+ 2800;
-    //Serial.print("After checks, Now is "); Serial.print(now);
-    //Serial.print("edgeStateStartedAt is "); Serial.println(edgeStateStartedAt);
 
     // edge ahead 
     if (left_d > EDGE_DISTANCE && right_d > EDGE_DISTANCE){ 
@@ -352,6 +409,34 @@ void loop() {
   }//stop edge turn ELSE
 
 }// END LOOP
+
+
+/* ***********************************************************
+ * LINE FOLLOWING FUNCTIONS
+ *************************************************************/
+bool isOnLine(int value, int threshold) {
+  return true ? value > threshold : value < threshold;
+}
+
+void getLineIR(){
+  L_lineDigital = digitalRead(L_IR_DIGITAL_PIN); 
+  if (L_lineDigital == LOW)
+    Serial.print("The L line is not present");
+  else
+    Serial.print("The L line is present !!!");
+  L_lineAnalog = analogRead(L_IR_ANALOG_PIN);
+  Serial.print(" | L IR analog value: ");
+  Serial.print(L_lineAnalog); 
+  
+  R_lineDigital = digitalRead(R_IR_DIGITAL_PIN);
+  if (R_lineDigital == LOW)
+    Serial.print(" ||The R line is not present");
+  else
+    Serial.print(" || The R line  is present !!!");
+  R_lineAnalog = analogRead(R_IR_ANALOG_PIN);
+  Serial.print(" | L IR analog value: ");
+  Serial.println(R_lineAnalog); 
+}
 
 
 /* ***********************************************************
