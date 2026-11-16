@@ -1,215 +1,111 @@
 /* ***********************************************************
- * VL53L0X / EDGE DETECTION VARIABLES
+ * LIBRARIES
  *************************************************************/
-#include <Wire.h>
-#include "Adafruit_VL53L0X.h"
-// 5V
-//#define SDA 21 //BLUE
-//#define SCL 22 //GREEN
-//#define VL53L0X_I2C_ADDR 0x29
-#define TOF_L_ADDRESS 0x30
-#define TOF_R_ADDRESS 0x31
-#define TOF_O_ADDRESS 0x32
-
-// set the pins to shutdown
-#define SHT_L 23
-#define SHT_R 15
-#define SHT_O 19
-
-// objects for the vl53l0x
-Adafruit_VL53L0X left_TOF; // 
-Adafruit_VL53L0X right_TOF;//
-Adafruit_VL53L0X obst_TOF; // 
-
-Adafruit_VL53L0X::VL53L0X_Sense_config_t sensor_config = Adafruit_VL53L0X::VL53L0X_SENSE_DEFAULT;
-// VL53L0X_SENSE_HIGH_ACCURACY   VL53L0X_SENSE_LONG_RANGE   VL53L0X_SENSE_DEFAULT VL53L0X_SENSE_HIGH_SPEED
-// high speed too inaacurate. high acc too slow
-
-const int EDGE_DISTANCE = 75; // sensor are 35-40mm away
-const unsigned long EDGE_STOP_TIME = 250;
-const unsigned long POST_TURN_STOP_TIME = 150;
-const int TURN_TIME = 900;
-
-enum EdgeState {
-  EDGE_MONITORING,
-  EDGE_TURNING,
-};
-EdgeState edgeState = EDGE_MONITORING;
-unsigned long edgeStateStartedAt;
-bool turnRightForEdge;
+#include <Wire.h> // for vl530l0x
+#include "Adafruit_VL53L0X.h" // for vl530l0x
+#include <ESP32Servo.h> // for the servo
 
 /* ***********************************************************
- * OBSTACLE AVOIDANCE VARIABLES
+ * ESP32 PINS USED
  *************************************************************/
-// SERVO MOTOR
-#include <ESP32Servo.h>
-//5v
-#define SERVO_PIN 13
-#define POS_INC   10
-#define POS_ANG   40
-#define INTERVAL  40 // 20ms is fastest, <=100 bad
+/* vl530l0x xshut pins - 3.3V */
+#define XSHT_PIN_L  23
+#define XSHT_PIN_R  18
+#define XSHT_PIN_T  19
+//#define SDA 21 // BLUE  / ORANGE
+//#define SCL 22 // GREEN / YELLOW
+/* ultrasonic's pins - 5V */
+#define TRIG_PIN    4 // yellow
+#define ECHO_PIN    2 // green
+
+/* servo pin - 5V*/
+#define SERVO_PIN   13
+/* DRV8833 motor input/control pins */
+#define MOTOR_A_IN1 27 // AIN1
+#define MOTOR_A_IN2 14 // AIN2
+#define MOTOR_B_IN3 26 // BIN1
+#define MOTOR_B_IN4 25 // BIN2
+/*IR obstacle detector pins - 3.3V*/
+#define L_IR_ANALOG_PIN 34
+#define R_IR_ANALOG_PIN 33
+#define M_IR_ANALOG_PIN 32
+
+/* ***********************************************************
+ * MOTOR VARIABLES
+ *************************************************************/
+// PWM properties: channels 0-7 = high speed, 8-15 = low speed
+const int PWM_RES =   8; 
+const int PWM_FREQ =  20000;
+const int PWM_CH_A1 = 12;   
+const int PWM_CH_A2 = 13; 
+const int PWM_CH_B1 = 14;    
+const int PWM_CH_B2 = 15;
+
+// speed, turn, and stop
+const unsigned long STOP_TIME = 250;
+const unsigned long POST_TURN_STOP_TIME = 100;
+const int TURN_TIME = 900;
+const int TURN_90DEG_TIME = 800;
+const int SPEED_MAX = 230; // untested
+const int SPEED_MIN = 187; // 180 isnt enough for A/L. 185 has some issues
+int speed_now = SPEED_MIN; // 
+int turn_speed = SPEED_MIN ;  
+
+/* ***********************************************************
+ * VL53L0X related variables
+ *************************************************************/
+// addresses
+#define TOF_L_ADDRESS 0x30
+#define TOF_R_ADDRESS 0x31
+#define TOF_T_ADDRESS 0x32
+
+// objects for the vl53l0x
+Adafruit_VL53L0X left_TOF;  
+Adafruit_VL53L0X right_TOF;
+Adafruit_VL53L0X top_TOF; 
+
+/* ***********************************************************
+ * Object and Turn Variables
+ *************************************************************/
+int min_obs = 0;
+const int OBSTACLE_DISTANCE = 300; // apply both for TOF and ultrasonic
+enum ObjectState {
+  OBJECT_MONITORING,
+  OBJECT_TURNING,
+};
+ObjectState objectState = OBJECT_MONITORING;
+unsigned long objectStateStartedAt;
+
+// servo related
 Servo servo;
 int pos = 90; // 0-180, start at 90deg aka forwards
-bool isCW = true;
-unsigned long servoPrevMillis = 0;
-
-// ULTRASONIC
-// 5V
-#define TRIG_PIN 4 // yellow
-#define ECHO_PIN 2 // green
-float ultrasonic_d;
-
-#define OBSTACLE_DISTANCE 350 // apply both for TOF and ultrasonic
-enum ObstacleState {
-  OBSTACLE_MONITORING,
-  OBSTACLE_TURNING,
-};
-ObstacleState obstacleState = OBSTACLE_MONITORING;
-unsigned long obsStateStartedAt;
-bool turnRightForObstacle;
-uint16_t obst_d = 0;
-
+bool isCW = true; // to control sweeo direction
+const int POS_INC = 12; // the dif between each stopped position
+const int POS_ANG = 36; // +/- from 90deg
+const int POS_INTERVAL = 80; //20ms is the fastest the servo can go
+// 10, 40, 40 was previous values
+unsigned long servoPrevMillis = 0; // used to time sweep increments
 
 /* ***********************************************************
  * LINE FOLLOWING VARIABLES
  *************************************************************/
-#define L_IR_DIGITAL_PIN 35 // ESP32 pin GPIO18 connected to OUT pin of IR obstacle avoidance sensor
-#define L_IR_ANALOG_PIN 34
-#define R_IR_DIGITAL_PIN 33 // ESP32 pin GPIO18 connected to OUT pin of IR obstacle avoidance sensor
-#define R_IR_ANALOG_PIN 32
+const int LEFT_LINE_THRESHOLD   = 800; // high 200 -> 1100s
+const int RIGHT_LINE_THRESHOLD  = 600; // high 200 -> 800s
+const int MIDDLE_LINE_THRESHOLD = 3000; // low 300s -> 3700s
 
-const int LEFT_THRESHOLD = 2000;
-const int RIGHT_THRESHOLD = 2000;
 
-int L_lineDigital, L_lineAnalog, R_lineDigital, R_lineAnalog;
-bool lineFound = false;
-
+int L_lineAnalog, R_lineAnalog, M_lineAnalog;
+bool lineAlreadyFound = false;
 bool leftOnLine = false;
 bool rightOnLine = false;
+bool middleOnLine = false;
 
+unsigned long middleLinePrevMillis = 0;
+const int LINE_INTERVAL = 1000;
 
 /* ***********************************************************
- * MOTOR CONTROL VARIABLES
- *************************************************************/
-// - MotorA is LEFT | MotorB is RIGHT 
-// Motor A connections
-#define MOTOR_A_IN1 27 // AIN1
-#define MOTOR_A_IN2 14 // AIN2
-  
-// Motor B connections
-#define MOTOR_B_IN3 26 // BIN1
-#define MOTOR_B_IN4 25 // BIN2
-
-// PWM properties: channels 0-7 = high speed, 8-15 = low speed
-#define PWM_RES     8 
-#define PWM_FREQ    20000
-#define PWM_CH_A1   12   
-#define PWM_CH_A2   13 
-#define PWM_CH_B1   14    
-#define PWM_CH_B2   15 
- 
-const int SPEED_MAX = 220; // duty cycle = 0 - 255. @ 5v this is good
-const int SPEED_MIN = 187; // 
-int speed_now = SPEED_MIN; // 180 isnt enough for A/L
-int turn_speed = SPEED_MIN ;  
-
-
-
-void setup_lineIR(){
-  pinMode(L_IR_DIGITAL_PIN, INPUT);
-  analogReadResolution(12); // ESP32 default: 0 to 4095
-  analogSetPinAttenuation(L_IR_ANALOG_PIN, ADC_11db);
-
-  pinMode(R_IR_DIGITAL_PIN, INPUT);
-  analogReadResolution(12); // ESP32 default: 0 to 4095
-  analogSetPinAttenuation(R_IR_ANALOG_PIN, ADC_11db);
-
-  Serial.println("Line IR sensors are set up!");
-}
-
-void setup_obsAvoidance(){
-  // configure the trigger pin to output mode
-  //pinMode(TRIG_PIN, OUTPUT);
-  // configure the echo pin to input mode
-  //pinMode(ECHO_PIN, INPUT);
-
-  // set servo input pin
-  servo.attach(SERVO_PIN);
-
-  //build up the capacitors a bit first
-  for(int angle = 0; angle <=180; angle+=45){
-    servo.write(angle); delay(500);
-  }
-  
-  // set it to face forward/centre/90deg
-  servo.write(pos);
-  Serial.print(F("Pin is at ")); Serial.println(pos);
-  //delay(2000);
-
-  Serial.println("Obstacle Avoidance sensors are set up!");
-
-}
-
-void setup_tof(){
-  pinMode(SHT_L, OUTPUT);
-  pinMode(SHT_R, OUTPUT);
-  //pinMode(SHT_O, OUTPUT);
-
-  Serial.println(F("Shutdown pins initiated..."));
-  digitalWrite(SHT_L, LOW);
-  digitalWrite(SHT_R, LOW);
-  //digitalWrite(SHT_O, LOW);
-  Serial.println(F("Both in reset mode...(pins are low)"));
-
-  // all reset
-  digitalWrite(SHT_L, LOW);    
-  digitalWrite(SHT_R, LOW);
-  //digitalWrite(SHT_O, LOW);
-  delay(10);
-
-  // activating LEFT
-  digitalWrite(SHT_L, HIGH);
-  delay(10);
-  while(!left_TOF.begin(TOF_L_ADDRESS)) {
-    Serial.println(F("Failed to boot LEFT VL53L0X"));
-    //while(1);
-  }
-  Serial.println(F("Booted LEFT VL53L0X successfully!"));
-  delay(10);
-
-  // activating OBS 
-  /*
-  digitalWrite(SHT_O, HIGH);
-  //digitalWrite(SHT_L, LOW);    
-  //digitalWrite(SHT_R, LOW);
-  delay(10);
-  while(!obst_TOF.begin(TOF_O_ADDRESS)) {
-    Serial.println(F("Failed to boot OBSTACLE VL53L0X"));
-    //while(1);
-  }
-  Serial.println(F("Booted OBSTACLE VL53L0X successfully!"));
-  delay(10); */
-
-  // activating RIGHT
-  digitalWrite(SHT_R, HIGH);
-  //digitalWrite(SHT_L, LOW);    
-  delay(10);
-  while(!right_TOF.begin(TOF_R_ADDRESS)) {
-    Serial.println(F("Failed to boot RIGHT VL53L0X"));
-    //while(1);
-  }
-  Serial.println(F("Booted RIGHT VL53L0X successfully!"));
-  delay(10);
-
-  
-  // start continuous ranging
-  left_TOF.startRangeContinuous();
-  right_TOF.startRangeContinuous();
-  //obst_TOF.startRangeContinuous(); 
-
-  Serial.println("All 3 VL53L0X sensors are connected!"); 
-}
-
+* SETUP functions
+*************************************************************/
 void setup_motors(){
   // Set all the motor control pins to outputs
   pinMode(MOTOR_A_IN1, OUTPUT);
@@ -228,187 +124,277 @@ void setup_motors(){
   motorA(0);
   motorB(0);
 
-  Serial.println("Both motors are set up!");
+  Serial.println("! --- Both motors are set up! ---");
 }
 
+void setup_obsAvoidance(){
+  // configure the trigger pin to output mode
+  pinMode(TRIG_PIN, OUTPUT);
+  // configure the echo pin to input mode
+  pinMode(ECHO_PIN, INPUT);
 
+  // set servo input pin
+  servo.attach(SERVO_PIN);
+  //build up the capacitors a bit first
+  for(int angle = 0; angle <=180; angle+=45){
+    servo.write(angle); delay(500);
+  }
+  // set it to face forward/centre/90deg
+  servo.write(pos); delay(500);
+  Serial.print(F("Pin is at ")); Serial.println(pos);
+
+  Serial.println("! --- Obstacle Avoidance sensors are set up! ---");
+}
+
+void setup_tof(){
+  // configure xshut pins
+  pinMode(XSHT_PIN_L, OUTPUT);
+  pinMode(XSHT_PIN_R, OUTPUT);
+  pinMode(XSHT_PIN_T, OUTPUT);
+
+  // set xshuts low to indicate address rewrite
+  Serial.println(F("Shutdown pins initiated..."));
+  digitalWrite(XSHT_PIN_L, LOW);
+  digitalWrite(XSHT_PIN_R, LOW);
+  digitalWrite(XSHT_PIN_T, LOW);
+  Serial.println(F("Both in reset mode...(pins are low)"));
+
+  // all reset 
+  digitalWrite(XSHT_PIN_L, LOW);    
+  digitalWrite(XSHT_PIN_R, LOW);
+  digitalWrite(XSHT_PIN_T, LOW);
+  delay(10);
+
+  // activating LEFT
+  digitalWrite(XSHT_PIN_L, HIGH);
+  delay(10);
+  while(!left_TOF.begin(TOF_L_ADDRESS)) {
+    Serial.print(F("xx Failed to boot LEFT VL53L0X... "));
+  }
+  Serial.println(" ");
+  Serial.println(F(" -- Booted LEFT VL53L0X successfully!"));
+  delay(10);
+
+  // activating TOP
+  digitalWrite(XSHT_PIN_T, HIGH);
+  delay(10);
+  while(!top_TOF.begin(TOF_T_ADDRESS)) {
+    Serial.println(F("xx Failed to boot OBSTACLE VL53L0X"));
+  }
+  Serial.println(" ");
+  Serial.println(F(" -- Booted TOP VL53L0X successfully!"));
+  delay(10);
+
+  // activating RIGHT
+  digitalWrite(XSHT_PIN_R, HIGH);
+  delay(10);
+  while(!right_TOF.begin(TOF_R_ADDRESS)) {
+    Serial.println(F("xx Failed to boot RIGHT VL53L0X"));
+  }
+  Serial.println(" ");
+  Serial.println(F(" -- Booted RIGHT VL53L0X successfully! "));
+  delay(10);
+  
+  // start continuous ranging
+  left_TOF.startRangeContinuous();
+  right_TOF.startRangeContinuous();
+  top_TOF.startRangeContinuous(); 
+
+  Serial.println(" ! --- All 3 VL53L0X sensors are connected! ---"); 
+}
+
+void setup_lineIR(){
+  //pinMode(L_IR_DIGITAL_PIN, INPUT);
+  //analogReadResolution(12); // ESP32 default: 0 to 4095
+  analogSetPinAttenuation(L_IR_ANALOG_PIN, ADC_11db);
+
+  //pinMode(R_IR_DIGITAL_PIN, INPUT);
+  //analogReadResolution(12); // ESP32 default: 0 to 4095
+  analogSetPinAttenuation(R_IR_ANALOG_PIN, ADC_11db);
+
+  analogSetPinAttenuation(M_IR_ANALOG_PIN, ADC_11db);
+
+  Serial.println(" ! --- Line IR sensors are set up! ---");
+}
+
+/*==============================================================================================*/
 void setup() {
   Serial.begin(115200);
   Serial.println("----- Starting Edge Detection RC !!! ----------------"); 
   delay(100); // allow me to switch to serial monitor
 
-  /* ***********************************************************
-   * MOTOR CONTROL SETUP
-   *************************************************************/
   setup_motors();
-
-  /* ***********************************************************
-   * OBSTACLE AVOIDANCE SETUP
-   *************************************************************/
+  setup_lineIR();
   setup_obsAvoidance();// pos=90
-  
-  /************************************************************
-   * VL53L0X / EDGE DETECTION SETUP
-   *************************************************************/
   setup_tof(); 
 
-  setup_lineIR();
-
-  Serial.println("----- Wait 4 seconds...   ------- ----------------"); 
+  Serial.println(" ! --- Wait 4 seconds...   -----------------------"); 
   delay(4000); // let me react
-  
 }
+/*==============================================================================================*/
 
-
-void loop() {
+void loop(){
+  // needed for turn timing
   unsigned long now = millis();
 
-  if (edgeState == EDGE_TURNING) {
-    if (now - edgeStateStartedAt < TURN_TIME) {
-      //Serial.print(F(" ^ currently turning! {now} - {edgeStateStartedAt} = {now - edgeStateStartedAt}"));
+  // handle any obstacle dodging first ========================================================
+  if (objectState == OBJECT_TURNING) {
+    // if its within the turning time
+    if (now - objectStateStartedAt <= TURN_TIME) {
+      Serial.print(F(" ^ currently turning!"));
       return;
     }
     else{
-      stop(); delay(100);
-      //Serial.print(" ^ Stopped turning!");
-      edgeState = EDGE_MONITORING;
-      edgeStateStartedAt = now;
+      stop(); delay(POST_TURN_STOP_TIME);
+      Serial.println(" ^ Stopped turning!");
+      objectState = OBJECT_MONITORING;
+      objectStateStartedAt = now;
       return;
     }
-  }
+  }//
 
-  // === OBSTACLE AVOIDANCE LOGIC  ======================================================
-  if (now - servoPrevMillis >= INTERVAL) {
+  // check for obstacles by obstaining the min distance of all ===============================
+  // sweep servo and ODA
+  // - move servo once it is greater, and reset time
+  if (now - servoPrevMillis >= POS_INTERVAL) {
     servoPrevMillis = now;
 
     if(pos < (90+POS_ANG) && isCW){
       pos += POS_INC;
     } else if (pos == (90+POS_ANG) && isCW){
       isCW = false;
-      pos += POS_INC;
+      //pos += POS_INC;
     } else if(pos > (90-POS_ANG) && !isCW){
       pos -= POS_INC;
     } else if(pos == (90-POS_ANG) && !isCW){
       isCW = true;
-      pos -= POS_INC;
+      //pos -= POS_INC;
     }
     servo.write(pos);
-  }
-  //Serial.print("pos is: "); Serial.print(pos);
-
-  // get the distances measured by the obstacle detectors
-  //obst_d = getObstacleToFDistance(); 
-  //Serial.print(" | TOF: "); Serial.print(obst_d); Serial.print(" mm");
-  //ultrasonic_d = pingUltrasonic();
-  //Serial.print(" | USD: "); Serial.print(ultrasonic_d); Serial.println("mm");
-  // === END OBSTACLE AVOIDANCE LOGIC  ==================================================
-    
-  // === EGDE DETECTION LOGIC ===========================================================
+    Serial.print("pos: "); Serial.print(pos);
+  } 
+  //get the distance, regardless if the servo moved or not
+  min_obs = checkObstacles();
   
 
-  // check that both EDGE TOFs are BOTH ready
-  if (!readTOFs()) {
-    return;
-  }
-  uint16_t left_d = left_TOF.readRangeResult();
-  uint16_t right_d = right_TOF.readRangeResult();
-  //Serial.print("Right: ");  Serial.print(right_d);  
-  //Serial.print(" mm, Left: ");  Serial.print(left_d);  Serial.print(" mm ==> ");
-  // === END EGDE DETECTION LOGIC =======================================================
+  //getLineIR(); // just see what happens for now
 
-  if (left_d <= EDGE_DISTANCE && right_d <= EDGE_DISTANCE 
-      //&& obst_d > OBSTACLE_DISTANCE && ultrasonic_d > OBSTACLE_DISTANCE
-  ) {
+  // movement logic tree ========================================================================
+  if ( min_obs > OBSTACLE_DISTANCE ) {
+    // if nothing blocking, move forward
     moveForward(speed_now);
+    objectState = OBJECT_MONITORING;
 
-    // do line follower logic here
+    //check and do line following logic as well
+/*
+    // check if either see a line
+    getLineIR(); // just see what happens for now
+    int leftValue  = analogRead(L_IR_ANALOG_PIN);
+    int rightValue = analogRead(R_IR_ANALOG_PIN);
+    int middleValue = analogRead(M_IR_ANALOG_PIN);
 
-    getLineIR();
+    leftOnLine = isOnLine(leftValue, LEFT_LINE_THRESHOLD);
+    rightOnLine = isOnLine(rightValue, RIGHT_LINE_THRESHOLD);
+    middleOnLine = isOnLine(middleValue, MIDDLE_LINE_THRESHOLD);
 
-    //LeftOnLine = isOnLine();
-    //rightOnLine = false;
+    // already on the line
+    if(lineAlreadyFound){
+      // either sensor sees, move forward
+      if(!leftOnLine && !rightOnLine || middleOnLine) moveForward(speed_now);
+      // if only left sensor detects, needs to turn left
+      else if(leftOnLine && !rightOnLine) turnLeftForward(speed_now);
+      // if right sensor detects, needs to turn right
+      else if(!leftOnLine && rightOnLine) turnRightForward(speed_now);
+
+      //if ran out of line or lost it
+      if(middleOnLine)
+        middleLinePrevMillis = now;
+      else{
+        // if middle havent seen it in a while
+        if(now - middleLinePrevMillis > LINE_INTERVAL){
+          lineAlreadyFound = false;
+        }
+      }
+    }
+    else{
+      // just found the line
+      // - either way, move foward until middle sensor finds it
+      // - then turn until a sensor finds and unfinds
+      // left sensor 1st, so line is down-left to up-right
+      if(leftOnLine && !rightOnLine){
+        Serial.print(">| | Left Sees Line - ");
+
+        //move forward until middle sees line
+        while(!middleOnLine ) moveForward(SPEED_MIN);        
+        Serial.print(" | Middle on Line. Now turning RIGHT to refind! ");
+
+        // turn right until R_IR sees...
+        while(!rightOnLine) turnRightOnSpot(speed_now);       
+        Serial.print(" | RIGHT IR sees! "); 
+
+        // ...and unsees
+        while(rightOnLine) turnRightOnSpot(speed_now);       
+        Serial.print(" | RIGHT no longer sees! Should be between L and L IRs! "); 
+      }
+      else{//((leftOnLine && !rightOnLine) || (leftOnLine && rightOnLine))
+        Serial.print(">| | Right Sees Line - ");
+
+        //move forward until middle sees line
+        while(!middleOnLine ) moveForward(SPEED_MIN);        
+        Serial.print(" | Middle on Line. Now turning LEFT to refind! ");
+
+        // turn right until R_IR sees...
+        while(!rightOnLine) turnLeftOnSpot(speed_now);       
+        Serial.print(" | RIGHT IR sees! "); 
+
+        // ...and unsees
+        while(rightOnLine) turnLeftOnSpot(speed_now);       
+        Serial.print(" | RIGHT no longer sees! Should be between L and L IRs! "); 
+      }
+      lineAlreadyFound = true;
+
+    }
+
     
-    /*
-    if not onLine i.e. not following a line yet
-    - if either L or R detect black line
-      - delay(100); // foward
-      - while (l is off)
-      -   turnLeft(speed);
-      - if L is on, 
-          while (L is on) turnLeft
-      - forward
-        online = true;
-
-    if onLine is true
-      if left and not right -> turn left()
-      if not left and right -> turn right()
-      // ignore other states for now
-      
+    // when the IR light is detected on the left, stop until it is off
+    //while(IR_detected){
+    //  stop(); delay(10);
+   // }
     */
-
-  } 
-  else {
+  }
+  // obstacle detected, handle it over anything else
+  else{
+    stop(); delay(STOP_TIME);
     Serial.print(" ! STOP ! : ");
-    stop(); delay(EDGE_STOP_TIME);
-    //Serial.print("Now is "); Serial.print(now);
-    //Serial.print("edgeStateStartedAt is "); Serial.println(edgeStateStartedAt);
 
-    //float distanceR = checkRight();//1400
-    //servo.write(90); delay(500);
-    //float distanceL = checkLeft();//1400
+    // change states
+    objectState = OBJECT_TURNING;
+    lineAlreadyFound = false;
 
-    edgeState = EDGE_TURNING;
-    edgeStateStartedAt = now ;//+ 2800;
+    //  look right and left for all turns
+    float distanceR = checkRight();//1000
+    //servo.write(90); delay(500); // in between to reduce s
+    float distanceL = checkLeft();//1000
+    servo.write(90); delay(100); // in between to reduce s
 
-    // edge ahead 
-    if (left_d > EDGE_DISTANCE && right_d > EDGE_DISTANCE){ 
-      Serial.print("Edge Ahead! -> ");
+    // record the state change time now
+    objectStateStartedAt = now + 2000 + 100; // now doesnt update. have to manually add 
 
-      //make sure safe to turn right from edge
-      //if (distanceR > OBSTACLE_DISTANCE)
-        turnRight(speed_now);
-      //else
-      //  turnLeft(speed_now);
-    }
-    // edge at left
-    else if (left_d > EDGE_DISTANCE && right_d <= EDGE_DISTANCE){
-      Serial.print("Edge LEFT! -> ");
-      //make sure safe to turn right from edge
-      //if (distanceR > OBSTACLE_DISTANCE)
-        turnRight(speed_now);
-      //else
-      //  turnLeft(speed_now);
-    }
-    //edge at right
-    else if(left_d <= EDGE_DISTANCE && right_d > EDGE_DISTANCE){
-      Serial.print("Edge RIGHT! -> ");
-      turnLeft(speed_now);
+    Serial.print("OBJECT found at: "); Serial.println(pos);
+    //Serial.print(" | left: "); Serial.print(distanceL); 
+    //Serial.print(" | right: "); Serial.println(distanceR); 
 
-      //make sure safe to turn right from edge
-      //if (distanceL > OBSTACLE_DISTANCE)
-      //  turnLeft(speed_now);
-      //else
-      //  turnRight(speed_now);
-    } 
-    // object detected 
-    /*
-    else if(obst_d <= OBSTACLE_DISTANCE || ultrasonic_d <= OBSTACLE_DISTANCE){
-      Serial.print("OBJECT found at: "); Serial.println(pos);
-      //Serial.print(" | left: "); Serial.print(distanceL); 
-      //Serial.print(" | right: "); Serial.println(distanceR); 
-      pos = 90;
+    if (distanceR >= distanceL && distanceR > OBSTACLE_DISTANCE*0.8)
+      turnRightOnSpot(turn_speed);
+    else if (distanceL >= distanceR && distanceL > OBSTACLE_DISTANCE*0.8)
+      turnLeftOnSpot(turn_speed);
+    else
+      moveBackwards(speed_now);
 
-      if (distanceR >= distanceL && distanceR > OBSTACLE_DISTANCE)
-        turnRight(speed_now);
-      else if (distanceL >= distanceR && distanceL > OBSTACLE_DISTANCE)
-        turnLeft(speed_now);
-      else
-        moveBackwards(speed_now);
-    }
-    */
-  }//stop edge turn ELSE
+  }// END MOVEMENT LOGIC TREE
+}
+/*==============================================================================================*/
 
-}// END LOOP
 
 
 /* ***********************************************************
@@ -419,90 +405,66 @@ bool isOnLine(int value, int threshold) {
 }
 
 void getLineIR(){
-  L_lineDigital = digitalRead(L_IR_DIGITAL_PIN); 
-  if (L_lineDigital == LOW)
-    Serial.print("The L line is not present");
-  else
-    Serial.print("The L line is present !!!");
+
   L_lineAnalog = analogRead(L_IR_ANALOG_PIN);
-  Serial.print(" | L IR analog value: ");
-  Serial.print(L_lineAnalog); 
-  
-  R_lineDigital = digitalRead(R_IR_DIGITAL_PIN);
-  if (R_lineDigital == LOW)
-    Serial.print(" ||The R line is not present");
-  else
-    Serial.print(" || The R line  is present !!!");
+  Serial.print("L IR analog value: ");  Serial.print(L_lineAnalog); 
+
   R_lineAnalog = analogRead(R_IR_ANALOG_PIN);
-  Serial.print(" | L IR analog value: ");
-  Serial.println(R_lineAnalog); 
+  Serial.print(" | R IR analog value: ");  Serial.print(R_lineAnalog); 
+
+  M_lineAnalog = analogRead(M_IR_ANALOG_PIN);
+  Serial.print(" | M IR analog value: ");  Serial.println(M_lineAnalog); 
 }
 
-
-/* ***********************************************************
- * VL53L0X / EDGE DETECTION FUNCTIONS
- *************************************************************/
-void testTOFsensors(){
-  uint16_t left_d;
-  uint16_t right_d;
-
-  if ( !readTOFs() ){
-    return;  
-  }  
-  Serial.print("RIGHT Distance in mm: ");
-  Serial.print(right_TOF.readRangeResult());
-
-  Serial.print(" | LEFT Distance in mm: ");
-  Serial.println(left_TOF.readRangeResult());
-  
-}
-/* There are 2 sensors to check
- * This functions handles checking that both TOFs are ready at the same time
- */
-bool readTOFs() {
-  if (!left_TOF.isRangeComplete() || !right_TOF.isRangeComplete() ) {
-    return false;
-  }
-  return true;
-}
 
 
 /* ***********************************************************
  * OBSTACLE AVOIDANCE FUNCTIONS
  *************************************************************/
-float look(int angle){
-  servo.write(angle); 
-  delay(500);
-  float US = pingUltrasonic();
-  float tof = float( getObstacleToFDistance() );
-  float distance = min(US, tof );
-  delay(200);
-  return distance;
-}
 float checkRight(){
-  float r1 = look(0); //700
-  float r2 = look(20); //700
+  float r1 = look(0); //500
+  float r2 = look(20); //500
   float distanceR = min(r1, r2);
   return distanceR;
 }
 float checkLeft(){
-  float l1 = look(160); //700
-  float l2 = look(180); //700
+  float l1 = look(160); //500
+  float l2 = look(180); //500
   float distanceL = min(l1, l2); 
   return distanceL;
 }
 
-int getObstacleToFDistance(){
-  int dist = obst_d;
+float look(int angle){
+  // turn to specified angle to look for objects
+  servo.write(angle); delay(500);
 
-  if(obst_TOF.isRangeComplete()) 
-    dist = obst_TOF.readRangeResult();
+  // get and return min distance found  
+  return checkObstacles();
+}
 
-  return dist;
+float checkObstacles(){
+  // get all distances
+  float distances[4];
+  distances[0] = pingUltrasonic();
+  distances[1] = float(   getToF_top() );
+  distances[2] = float( getToF_right() );
+  distances[3] = float(  getToF_left() );
+  
+  // find the smallest of them all
+  float min_distance = INT_MAX;
+  Serial.print(" us | top | R | L --" );
+  for(int i = 0; i < 4 ; i++){
+    Serial.print(" | ");  Serial.print(distances[i]); Serial.print(" mm"); 
+    if( distances[i] <= min_distance )
+      min_distance = distances[i] ;
+  }
+  Serial.print(" | min is:" ); Serial.println(min_distance);
+  
+  return min_distance;
 }
 
 float pingUltrasonic(){
-  // ping thr trigger
+  // ping trigger
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH);
@@ -512,31 +474,33 @@ float pingUltrasonic(){
   // measure duration of pulse from ECHO pin
   float duration_us = pulseIn(ECHO_PIN, HIGH);
   // calculate the distance
-  float distance_mm = 0.017 * duration_us * 10.0;
+  float distance_mm = 0.017 * duration_us * 10.0; // x10 for cm to mm
 
   return distance_mm;
 }
-
-void servoSweep(){
-  if(pos < 135 && isCW){
-    pos += POS_INC;
-    //Serial.println("Servo turns CW");
-  }
-  else if (pos == 135 && isCW){
-    isCW = false;
-    pos += POS_INC;
-  }
-  else if(pos > 45 && !isCW){
-    pos -= POS_INC;
-    //Serial.println("Servo turns CCW");
-  }
-  else if(pos == 45 && !isCW){
-    isCW = true;
-    pos -= POS_INC;
-  }
-  Serial.print("pos is: "); Serial.println(pos);
-  servo.write(pos);
+// tof distance functions for each
+int getToF_top(){
+  if(top_TOF.isRangeComplete()){
+    return top_TOF.readRangeResult();
+  } 
+    
+  else
+    return min_obs;
 }
+int getToF_right(){
+  if(right_TOF.isRangeComplete()) 
+    return right_TOF.readRangeResult();
+  else
+    return min_obs;
+}
+int getToF_left(){
+  if(left_TOF.isRangeComplete()) 
+    return left_TOF.readRangeResult();
+  else
+    return min_obs;
+}
+
+
 
 
 /* ***********************************************************
@@ -554,11 +518,11 @@ void servoSweep(){
 void driveChannel(int pinA, int pinB, int speed) {
   speed = constrain(speed, -255, 255);
   if (speed > 0) {
-    ledcWrite(pinA, speed);
-    ledcWrite(pinB, 0);
-  } else if (speed < 0) {
     ledcWrite(pinA, 0);
-    ledcWrite(pinB, -speed);
+    ledcWrite(pinB, speed);
+  } else if (speed < 0) {
+    ledcWrite(pinA, -speed);
+    ledcWrite(pinB, 0);
   } else {
     ledcWrite(pinA, 0);
     ledcWrite(pinB, 0);
@@ -595,16 +559,30 @@ void moveBackwards(int speed){
   motorB(-speed);
   Serial.println("Moving Backwards");
 }
-void turnRight(int speed){
+void turnRightOnSpot(int speed){
   // LEFT/A wheel forwards
   motorA(speed);
   // RIGHT/B wheel backwards
   motorB(-speed);
   Serial.println("Turning Right");
 }
-void turnLeft(int speed){
+void turnLeftOnSpot(int speed){
   // LEFT/A wheel backwards
   motorA(-speed);
+  // RIGHT/B wheel forwards
+  motorB(speed);
+  Serial.println("Turning Left");
+}
+void turnRightForward(int speed){
+  // LEFT/A wheel forwards
+  motorA(speed);
+  // RIGHT/B wheel backwards
+  motorB(0);
+  Serial.println("Turning Right");
+}
+void turnLeftForward(int speed){
+  // LEFT/A wheel backwards
+  motorA(0);
   // RIGHT/B wheel forwards
   motorB(speed);
   Serial.println("Turning Left");
@@ -616,15 +594,17 @@ void stop() {
   Serial.println("Coast stopping");
 }
 
-void testMotorMovement(){
-  moveForward(speed_now);
-  delay(5000);
-  moveBackwards(speed_now);
-  delay(5000);
-  turnRight(speed_now);
-  delay(5000);
-  turnLeft(speed_now);
-  delay(5000);
-  stop();
-  delay(5000);
+void testMotorDirections(){
+  moveForward(speed_now);      delay(10000);
+  stop(); delay(1000);
+  moveBackwards(speed_now);    delay(10000);
+  stop(); delay(1000);
+  turnRightOnSpot(speed_now);  delay(10000);
+  stop(); delay(1000);
+  turnLeftOnSpot(speed_now);   delay(10000);
+  stop(); delay(1000);
+  turnRightForward(speed_now); delay(10000);
+  stop(); delay(1000);
+  turnLeftForward(speed_now);  delay(10000);
+  stop(); delay(1000);
 }
