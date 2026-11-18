@@ -4,6 +4,7 @@
 #include <Wire.h> // for vl530l0x
 #include "Adafruit_VL53L0X.h" // for vl530l0x
 #include <ESP32Servo.h> // for the servo
+#include <IRremote.hpp> //
 
 /* ***********************************************************
  * ESP32 PINS USED
@@ -29,6 +30,9 @@
 #define L_IR_ANALOG_PIN 34
 #define R_IR_ANALOG_PIN 33
 #define M_IR_ANALOG_PIN 32
+/*IR Light Detector - 3.3V*/
+#define IR_DETECTOR_PIN 35
+
 
 /* ***********************************************************
  * MOTOR VARIABLES
@@ -228,13 +232,17 @@ void setup() {
   setup_obsAvoidance();// pos=90
   setup_tof(); 
 
+  //try IR receiver module
+  //pinMode(IR_DETECTOR_PIN, INPUT);
+  IrReceiver.begin(IR_DETECTOR_PIN , ENABLE_LED_FEEDBACK);
+
   Serial.println(" ! --- Wait 4 seconds...   -----------------------"); 
   delay(4000); // let me react
 }
 /*==============================================================================================*/
 
 void loop() {
-  // needed for turn timing
+  /// needed for turn timing
   unsigned long now = millis();
 
   // handle any obstacle dodging first ========================================================
@@ -352,13 +360,21 @@ void loop() {
       lineAlreadyFound = true;
 
     }
-*/
+
     
     // when the IR light is detected on the left, stop until it is off
-    //while(IR_detected){
-    //  stop(); delay(10);
-   // }
-    
+    if(IrReceiver.decode()) {
+      stop(); delay(10);
+
+      do{
+        Serial.print("!!!!IR signal detected");
+        IrReceiver.resume();
+        delay(300);
+      } while(IrReceiver.decode());
+      
+      delay(300);
+    }
+    */
   }
   // obstacle detected, handle it over anything else
   else{
@@ -391,11 +407,19 @@ void loop() {
 
     
   }
+
   
 
 }
 /*==============================================================================================*/
 
+
+void hold(){
+
+  
+  
+
+}
 
 /* ***********************************************************
  * LINE FOLLOWING FUNCTIONS

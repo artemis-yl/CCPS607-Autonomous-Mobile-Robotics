@@ -4,6 +4,7 @@
 #include <Wire.h> // for vl530l0x
 #include "Adafruit_VL53L0X.h" // for vl530l0x
 #include <ESP32Servo.h> // for the servo
+#include <IRremote.hpp> // IR detection
 
 /* ***********************************************************
  * ESP32 PINS USED
@@ -29,6 +30,9 @@
 #define L_IR_ANALOG_PIN 34
 #define R_IR_ANALOG_PIN 33
 #define M_IR_ANALOG_PIN 32
+/*IR Light Detector - 3.3V*/
+#define IR_DETECTOR_PIN 35
+
 
 /* ***********************************************************
  * MOTOR VARIABLES
@@ -46,7 +50,7 @@ const unsigned long STOP_TIME = 250;
 const unsigned long POST_TURN_STOP_TIME = 100;
 const int TURN_TIME = 900;
 const int TURN_90DEG_TIME = 800;
-const int SPEED_MAX = 230; // untested
+const int SPEED_MAX = 210; // untested
 const int SPEED_MIN = 187; // 180 isnt enough for A/L. 185 has some issues
 int speed_now = SPEED_MIN; // 
 int turn_speed = SPEED_MIN ;  
@@ -68,7 +72,7 @@ Adafruit_VL53L0X top_TOF;
  * Object and Turn Variables
  *************************************************************/
 int min_obs = 0;
-const int OBSTACLE_DISTANCE = 300; // apply both for TOF and ultrasonic
+const int OBSTACLE_DISTANCE = 260; // apply both for TOF and ultrasonic
 enum ObjectState {
   OBJECT_MONITORING,
   OBJECT_TURNING,
@@ -80,7 +84,7 @@ unsigned long objectStateStartedAt;
 Servo servo;
 int pos = 90; // 0-180, start at 90deg aka forwards
 bool isCW = true; // to control sweeo direction
-const int POS_INC = 12; // the dif between each stopped position
+const int POS_INC = 18; // the dif between each stopped position
 const int POS_ANG = 36; // +/- from 90deg
 const int POS_INTERVAL = 80; //20ms is the fastest the servo can go
 // 10, 40, 40 was previous values
@@ -89,9 +93,9 @@ unsigned long servoPrevMillis = 0; // used to time sweep increments
 /* ***********************************************************
  * LINE FOLLOWING VARIABLES
  *************************************************************/
-const int LEFT_LINE_THRESHOLD   = 800; // high 200 -> 1100s
-const int RIGHT_LINE_THRESHOLD  = 600; // high 200 -> 800s
-const int MIDDLE_LINE_THRESHOLD = 3000; // low 300s -> 3700s
+const int LEFT_LINE_THRESHOLD   = 500; // high 200 -> 1100s
+const int RIGHT_LINE_THRESHOLD  = 500; // high 200 -> 800s
+const int MIDDLE_LINE_THRESHOLD = 500; // low 300s -> 3700s
 
 
 int L_lineAnalog, R_lineAnalog, M_lineAnalog;
@@ -102,6 +106,9 @@ bool middleOnLine = false;
 
 unsigned long middleLinePrevMillis = 0;
 const int LINE_INTERVAL = 1000;
+
+bool isLightOn = false;
+unsigned long lightLastOnMillis = 0;
 
 /* ***********************************************************
 * SETUP functions
@@ -214,8 +221,15 @@ void setup_lineIR(){
 
   analogSetPinAttenuation(M_IR_ANALOG_PIN, ADC_11db);
 
-  Serial.println(" ! --- Line IR sensors are set up! ---");
+  //try IR receiver module
+  //IrReceiver.begin(IR_DETECTOR_PIN , ENABLE_LED_FEEDBACK);
+  //pinMode(IR_DETECTOR_PIN, INPUT);
+
+  analogSetPinAttenuation(IR_DETECTOR_PIN, ADC_11db);
+
+  Serial.println(" ! --- Line IR sensors AND receiver are set up! ---");
 }
+
 
 /*==============================================================================================*/
 void setup() {
@@ -271,97 +285,177 @@ void loop(){
       //pos -= POS_INC;
     }
     servo.write(pos);
-    Serial.print("pos: "); Serial.print(pos);
+    //Serial.print("pos: "); Serial.print(pos);
   } 
+
   //get the distance, regardless if the servo moved or not
   min_obs = checkObstacles();
+
+  int light = analogRead(IR_DETECTOR_PIN);
+
+  if(light < 100 || isLightOn){
+    isLightOn = true;
+    delay(1000);
+    //lightLastOnMillis = now;
+    //Serial.print(" | LIGHT | ");
+    //Serial.print(analogRead(IR_DETECTOR_PIN));
+    return;
+  }
+  /*while(isLightOn){
+    Serial.print(" | LIGHT | ");
+    Serial.print(analogRead(IR_DETECTOR_PIN));
+
+    if (millis() - lightLastOnMillis >= 500) {
+      if(light > 300){
+        isLightOn = false;
+      }
+    }
+  }*/
   
-
-  //getLineIR(); // just see what happens for now
-
   // movement logic tree ========================================================================
   if ( min_obs > OBSTACLE_DISTANCE ) {
+
+    
+
     // if nothing blocking, move forward
     moveForward(speed_now);
     objectState = OBJECT_MONITORING;
 
     //check and do line following logic as well
-/*
+
     // check if either see a line
-    getLineIR(); // just see what happens for now
-    int leftValue  = analogRead(L_IR_ANALOG_PIN);
-    int rightValue = analogRead(R_IR_ANALOG_PIN);
-    int middleValue = analogRead(M_IR_ANALOG_PIN);
+    //getLineIR(); // just see what happens for now
+    
+    L_lineAnalog  = analogRead(L_IR_ANALOG_PIN);
+    R_lineAnalog = analogRead(R_IR_ANALOG_PIN);
+    M_lineAnalog = analogRead(M_IR_ANALOG_PIN);
 
-    leftOnLine = isOnLine(leftValue, LEFT_LINE_THRESHOLD);
-    rightOnLine = isOnLine(rightValue, RIGHT_LINE_THRESHOLD);
-    middleOnLine = isOnLine(middleValue, MIDDLE_LINE_THRESHOLD);
+    leftOnLine = isOnLine(L_lineAnalog, LEFT_LINE_THRESHOLD);
+    rightOnLine = isOnLine(R_lineAnalog, RIGHT_LINE_THRESHOLD);
+    middleOnLine = isOnLine(M_lineAnalog, MIDDLE_LINE_THRESHOLD);
 
+    
+    Serial.print("L IR: "); Serial.print(L_lineAnalog);
+    Serial.print(" | R IR: "); Serial.print(R_lineAnalog);
+    Serial.print(" | M IR: "); Serial.println(M_lineAnalog);
+
+    Serial.print("L line on?: "); Serial.print(leftOnLine);
+    Serial.print(" | R line on?: "); Serial.print(rightOnLine);
+    Serial.print(" | M line on?: "); Serial.println(middleOnLine);
+    
+
+    
     // already on the line
-    if(lineAlreadyFound){
-      // either sensor sees, move forward
-      if(!leftOnLine && !rightOnLine || middleOnLine) moveForward(speed_now);
-      // if only left sensor detects, needs to turn left
-      else if(leftOnLine && !rightOnLine) turnLeftForward(speed_now);
-      // if right sensor detects, needs to turn right
-      else if(!leftOnLine && rightOnLine) turnRightForward(speed_now);
+    //if(lineAlreadyFound){
+    //Serial.println("On the line - doing stuff");
+    
+    // either sensor doesnt sees, move forward
+    if(!leftOnLine && !rightOnLine && middleOnLine){ 
+      moveForward(speed_now);
+    } 
+    else if(leftOnLine && !rightOnLine){
+      turnLeftOnSpot(200); delay(50);
+      Serial.println("On the line - going left");
+    } 
+    else if(!leftOnLine && rightOnLine ) {
+      turnRightOnSpot(200); delay(50);
+      Serial.println("On the line -  going right");
+    }
+    // if only left sensor detects, needs to turn left
+    else if(leftOnLine && !rightOnLine && middleOnLine){
+      turnRightForward(speed_now); delay(100);
+      Serial.println("On the line - going left");
+      lineAlreadyFound = true;
+    } 
+    // if right sensor detects, needs to turn right
+    else if(!leftOnLine && rightOnLine && middleOnLine) {
+      turnLeftForward(speed_now); delay(100);
+      Serial.println("On the line -  going right");
+      lineAlreadyFound = true;
+    }
 
-      //if ran out of line or lost it
-      if(middleOnLine)
-        middleLinePrevMillis = now;
-      else{
-        // if middle havent seen it in a while
-        if(now - middleLinePrevMillis > LINE_INTERVAL){
-          lineAlreadyFound = false;
-        }
+    
+    
+    //if ran out of line or lost it
+    if(middleOnLine)
+      middleLinePrevMillis = now;
+    else{
+      // if middle havent seen it in a while
+      if(now - middleLinePrevMillis > LINE_INTERVAL){
+        lineAlreadyFound = false;
       }
     }
-    else{
-      // just found the line
-      // - either way, move foward until middle sensor finds it
-      // - then turn until a sensor finds and unfinds
-      // left sensor 1st, so line is down-left to up-right
+      /*
+    } else{
+     
       if(leftOnLine && !rightOnLine){
         Serial.print(">| | Left Sees Line - ");
 
         //move forward until middle sees line
-        while(!middleOnLine ) moveForward(SPEED_MIN);        
+        while(!middleOnLine ) {
+          moveForward(SPEED_MIN);
+        }        
         Serial.print(" | Middle on Line. Now turning RIGHT to refind! ");
 
         // turn right until R_IR sees...
-        while(!rightOnLine) turnRightOnSpot(speed_now);       
+        while(!rightOnLine){
+          turnRightOnSpot(speed_now);     
+        }  
         Serial.print(" | RIGHT IR sees! "); 
 
         // ...and unsees
-        while(rightOnLine) turnRightOnSpot(speed_now);       
+        while(rightOnLine){
+          turnRightOnSpot(speed_now);    
+        }   
         Serial.print(" | RIGHT no longer sees! Should be between L and L IRs! "); 
+
+        lineAlreadyFound = true;
       }
-      else{//((leftOnLine && !rightOnLine) || (leftOnLine && rightOnLine))
-        Serial.print(">| | Right Sees Line - ");
+      else {// if( (leftOnLine && !rightOnLine) || (leftOnLine && rightOnLine) ){
+        Serial.print(">| | Right Sees Line - "); Serial.print(rightOnLine);
 
         //move forward until middle sees line
-        while(!middleOnLine ) moveForward(SPEED_MIN);        
+        while(!middleOnLine ){
+          moveForward(SPEED_MIN);
+        }        
         Serial.print(" | Middle on Line. Now turning LEFT to refind! ");
 
         // turn right until R_IR sees...
-        while(!rightOnLine) turnLeftOnSpot(speed_now);       
+        while(!rightOnLine) {
+          turnLeftOnSpot(speed_now);
+        }       
         Serial.print(" | RIGHT IR sees! "); 
 
         // ...and unsees
-        while(rightOnLine) turnLeftOnSpot(speed_now);       
+        while(rightOnLine){
+           turnLeftOnSpot(speed_now);     
+        }  
         Serial.print(" | RIGHT no longer sees! Should be between L and L IRs! "); 
+
+        lineAlreadyFound = true;
       }
-      lineAlreadyFound = true;
+      
 
     }
-
+*/
+    
     
     // when the IR light is detected on the left, stop until it is off
-    //while(IR_detected){
-    //  stop(); delay(10);
-   // }
+    /*
+    if(IrReceiver.decode()) {
+      stop(); delay(10);
+
+      do{
+        Serial.print("!!!!IR signal detected");
+        IrReceiver.resume();
+        delay(100);
+      } while(IrReceiver.decode());
+      
+      delay(300);
+    }
     */
   }
+  
   // obstacle detected, handle it over anything else
   else{
     stop(); delay(STOP_TIME);
@@ -392,6 +486,7 @@ void loop(){
       moveBackwards(speed_now);
 
   }// END MOVEMENT LOGIC TREE
+  
 }
 /*==============================================================================================*/
 
@@ -401,7 +496,10 @@ void loop(){
  * LINE FOLLOWING FUNCTIONS
  *************************************************************/
 bool isOnLine(int value, int threshold) {
-  return true ? value > threshold : value < threshold;
+  if (value >= threshold)
+    return true;
+  else
+    return false;
 }
 
 void getLineIR(){
@@ -452,13 +550,13 @@ float checkObstacles(){
   
   // find the smallest of them all
   float min_distance = INT_MAX;
-  Serial.print(" us | top | R | L --" );
+  //Serial.print(" us | top | R | L --" );
   for(int i = 0; i < 4 ; i++){
-    Serial.print(" | ");  Serial.print(distances[i]); Serial.print(" mm"); 
+    //Serial.print(" | ");  Serial.print(distances[i]); Serial.print(" mm"); 
     if( distances[i] <= min_distance )
       min_distance = distances[i] ;
   }
-  Serial.print(" | min is:" ); Serial.println(min_distance);
+  //Serial.print(" | min is:" ); Serial.println(min_distance);
   
   return min_distance;
 }
@@ -552,7 +650,7 @@ void accelerate(int speedA, int speedB, int stepDelay) {
 void moveForward(int speed){
   motorA(speed);
   motorB(speed);
-  Serial.println("Moving Forward");
+  //Serial.println("Moving Forward");
 }
 void moveBackwards(int speed){
   motorA(-speed);
@@ -561,16 +659,16 @@ void moveBackwards(int speed){
 }
 void turnRightOnSpot(int speed){
   // LEFT/A wheel forwards
-  motorA(speed);
+  motorA(-speed);
   // RIGHT/B wheel backwards
-  motorB(-speed);
+  motorB(speed);
   Serial.println("Turning Right");
 }
 void turnLeftOnSpot(int speed){
   // LEFT/A wheel backwards
-  motorA(-speed);
+  motorA(speed);
   // RIGHT/B wheel forwards
-  motorB(speed);
+  motorB(-speed);
   Serial.println("Turning Left");
 }
 void turnRightForward(int speed){
