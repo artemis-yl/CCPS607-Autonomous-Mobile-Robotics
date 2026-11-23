@@ -28,11 +28,11 @@
 #define MOTOR_B_IN4 25 // BIN2
 /*IR obstacle detector pins - 3.3V*/
 #define L_IR_ANALOG_PIN 34
-#define R_IR_ANALOG_PIN 33
-#define M_IR_ANALOG_PIN 32
+#define R_IR_ANALOG_PIN 15
+#define MR_IR_ANALOG_PIN 33
+#define ML_IR_ANALOG_PIN 35
 /*IR Light Detector - 3.3V*/
-#define IR_DETECTOR_PIN 35
-
+#define IR_DETECTOR_PIN 32
 
 /* ***********************************************************
  * MOTOR VARIABLES
@@ -50,10 +50,9 @@ const unsigned long STOP_TIME = 250;
 const unsigned long POST_TURN_STOP_TIME = 100;
 const int TURN_TIME = 900;
 const int TURN_90DEG_TIME = 800;
-const int SPEED_MAX = 210; // untested
+const int SPEED_MAX = 215; // line following turns
 const int SPEED_MIN = 187; // 180 isnt enough for A/L. 185 has some issues
 int speed_now = SPEED_MIN; // 
-int turn_speed = SPEED_MIN ;  
 
 /* ***********************************************************
  * VL53L0X related variables
@@ -72,7 +71,7 @@ Adafruit_VL53L0X top_TOF;
  * Object and Turn Variables
  *************************************************************/
 int min_obs = 0;
-const int OBSTACLE_DISTANCE = 260; // apply both for TOF and ultrasonic
+const int OBSTACLE_DISTANCE = 275; // apply both for TOF and ultrasonic
 enum ObjectState {
   OBJECT_MONITORING,
   OBJECT_TURNING,
@@ -86,25 +85,29 @@ int pos = 90; // 0-180, start at 90deg aka forwards
 bool isCW = true; // to control sweeo direction
 const int POS_INC = 18; // the dif between each stopped position
 const int POS_ANG = 36; // +/- from 90deg
-const int POS_INTERVAL = 80; //20ms is the fastest the servo can go
+const int POS_INTERVAL = 70; //20ms is the fastest the servo can go
 // 10, 40, 40 was previous values
 unsigned long servoPrevMillis = 0; // used to time sweep increments
 
 /* ***********************************************************
  * LINE FOLLOWING VARIABLES
  *************************************************************/
-const int LEFT_LINE_THRESHOLD   = 500; // high 200 -> 1100s
-const int RIGHT_LINE_THRESHOLD  = 500; // high 200 -> 800s
-const int MIDDLE_LINE_THRESHOLD = 500; // low 300s -> 3700s
+const int LEFT_LINE_THRESHOLD   = 300; // high 200 -> 1100s
+const int MIDDLE_L_LINE_THRESHOLD = 300; // low 300s -> 3700s
+const int MIDDLE_R_LINE_THRESHOLD = 500; // low 300s -> 3700s
+const int RIGHT_LINE_THRESHOLD  = 1000; // high 200 -> 800s
 
 
-int L_lineAnalog, R_lineAnalog, M_lineAnalog;
+
+int L_lineAnalog, R_lineAnalog, MR_lineAnalog, ML_lineAnalog;
 bool lineAlreadyFound = false;
 bool leftOnLine = false;
 bool rightOnLine = false;
-bool middleOnLine = false;
+bool middleRightOnLine = false;
+bool middleLeftOnLine = false;
 
-unsigned long middleLinePrevMillis = 0;
+
+unsigned long linePrevMillis = 0;
 const int LINE_INTERVAL = 1000;
 
 bool isLightOn = false;
@@ -211,20 +214,14 @@ void setup_tof(){
 }
 
 void setup_lineIR(){
-  //pinMode(L_IR_DIGITAL_PIN, INPUT);
-  //analogReadResolution(12); // ESP32 default: 0 to 4095
   analogSetPinAttenuation(L_IR_ANALOG_PIN, ADC_11db);
-
-  //pinMode(R_IR_DIGITAL_PIN, INPUT);
-  //analogReadResolution(12); // ESP32 default: 0 to 4095
   analogSetPinAttenuation(R_IR_ANALOG_PIN, ADC_11db);
-
-  analogSetPinAttenuation(M_IR_ANALOG_PIN, ADC_11db);
+  analogSetPinAttenuation(MR_IR_ANALOG_PIN, ADC_11db);
+  analogSetPinAttenuation(ML_IR_ANALOG_PIN, ADC_11db);
 
   //try IR receiver module
   //IrReceiver.begin(IR_DETECTOR_PIN , ENABLE_LED_FEEDBACK);
   //pinMode(IR_DETECTOR_PIN, INPUT);
-
   analogSetPinAttenuation(IR_DETECTOR_PIN, ADC_11db);
 
   Serial.println(" ! --- Line IR sensors AND receiver are set up! ---");
@@ -267,6 +264,32 @@ void loop(){
     }
   }//
 
+  // when the IR light is detected on the left, stop until it is off
+  /*
+  if(IrReceiver.decode()) {
+    stop(); delay(10);
+
+    do{
+      Serial.print("!!!!IR signal detected");
+      IrReceiver.resume();
+      delay(100);
+    } while(IrReceiver.decode());
+    
+    delay(300);
+  }*/
+
+  int IR_light = analogRead(IR_DETECTOR_PIN);
+  Serial.print("IR: "); Serial.print(IR_light);
+
+  if(IR_light < 2000 || isLightOn){
+    //isLightOn = true;
+    delay(1000);
+    //lightLastOnMillis = now;
+    Serial.print(" | LIGHT : ");
+    Serial.print(analogRead(IR_DETECTOR_PIN));
+    return;
+  }
+
   // check for obstacles by obstaining the min distance of all ===============================
   // sweep servo and ODA
   // - move servo once it is greater, and reset time
@@ -287,175 +310,78 @@ void loop(){
     servo.write(pos);
     //Serial.print("pos: "); Serial.print(pos);
   } 
-
   //get the distance, regardless if the servo moved or not
   min_obs = checkObstacles();
-
-  int light = analogRead(IR_DETECTOR_PIN);
-
-  if(light < 100 || isLightOn){
-    isLightOn = true;
-    delay(1000);
-    //lightLastOnMillis = now;
-    //Serial.print(" | LIGHT | ");
-    //Serial.print(analogRead(IR_DETECTOR_PIN));
-    return;
-  }
-  /*while(isLightOn){
-    Serial.print(" | LIGHT | ");
-    Serial.print(analogRead(IR_DETECTOR_PIN));
-
-    if (millis() - lightLastOnMillis >= 500) {
-      if(light > 300){
-        isLightOn = false;
-      }
-    }
-  }*/
-  
+ 
   // movement logic tree ========================================================================
   if ( min_obs > OBSTACLE_DISTANCE ) {
-
-    
-
     // if nothing blocking, move forward
     moveForward(speed_now);
     objectState = OBJECT_MONITORING;
 
-    //check and do line following logic as well
-
-    // check if either see a line
-    //getLineIR(); // just see what happens for now
-    
+    //check and do line following logic as well -------------------------------------------------   
     L_lineAnalog  = analogRead(L_IR_ANALOG_PIN);
     R_lineAnalog = analogRead(R_IR_ANALOG_PIN);
-    M_lineAnalog = analogRead(M_IR_ANALOG_PIN);
+    MR_lineAnalog = analogRead(MR_IR_ANALOG_PIN);
+    ML_lineAnalog = analogRead(ML_IR_ANALOG_PIN);
 
     leftOnLine = isOnLine(L_lineAnalog, LEFT_LINE_THRESHOLD);
     rightOnLine = isOnLine(R_lineAnalog, RIGHT_LINE_THRESHOLD);
-    middleOnLine = isOnLine(M_lineAnalog, MIDDLE_LINE_THRESHOLD);
+    middleRightOnLine = isOnLine(MR_lineAnalog, MIDDLE_R_LINE_THRESHOLD);
+    middleLeftOnLine = isOnLine(ML_lineAnalog, MIDDLE_L_LINE_THRESHOLD);
 
-    
-    Serial.print("L IR: "); Serial.print(L_lineAnalog);
+    Serial.print(" ||| L IR: "); Serial.print(L_lineAnalog);
+    Serial.print(" | ML IR: "); Serial.print(ML_lineAnalog);
+    Serial.print(" | MR IR: "); Serial.print(MR_lineAnalog);
     Serial.print(" | R IR: "); Serial.print(R_lineAnalog);
-    Serial.print(" | M IR: "); Serial.println(M_lineAnalog);
 
-    Serial.print("L line on?: "); Serial.print(leftOnLine);
-    Serial.print(" | R line on?: "); Serial.print(rightOnLine);
-    Serial.print(" | M line on?: "); Serial.println(middleOnLine);
-    
+    Serial.print("   ||   L line on?: "); Serial.print(leftOnLine);
+    Serial.print(" | ML line on?: "); Serial.print(middleLeftOnLine);
+    Serial.print(" | MR line on?: "); Serial.print(middleRightOnLine);
+    Serial.print(" | R line on?: "); Serial.println(rightOnLine);
 
-    
-    // already on the line
-    //if(lineAlreadyFound){
-    //Serial.println("On the line - doing stuff");
-    
-    // either sensor doesnt sees, move forward
-    if(!leftOnLine && !rightOnLine && middleOnLine){ 
-      moveForward(speed_now);
+    // very left
+    if(leftOnLine && !middleLeftOnLine && !middleRightOnLine && !rightOnLine){//1000
+      turnLeftOnSpot(SPEED_MIN+8); //delay(50);
+      //Serial.println("On the line - going left");
     } 
-    else if(leftOnLine && !rightOnLine){
-      turnLeftOnSpot(200); delay(50);
-      Serial.println("On the line - going left");
+    //little left
+    else if(!leftOnLine && middleLeftOnLine && !middleRightOnLine && !rightOnLine ) {//0100
+      turnLeftOnSpot(SPEED_MIN); //delay(50);
+      //Serial.println("On the line -  going right");
+    }
+    // little right
+    else if(!leftOnLine && !middleLeftOnLine && middleRightOnLine && !rightOnLine){//0010
+      turnRightOnSpot(SPEED_MIN); //elay(150);
+      //Serial.println("On the line - going left");
+      //lineAlreadyFound = true;
     } 
-    else if(!leftOnLine && rightOnLine ) {
-      turnRightOnSpot(200); delay(50);
-      Serial.println("On the line -  going right");
+    // very right
+    else if(!leftOnLine && !middleLeftOnLine && !middleRightOnLine && rightOnLine) {//0001
+      turnRightOnSpot(SPEED_MIN+8); //delay(150);
     }
-    // if only left sensor detects, needs to turn left
-    else if(leftOnLine && !rightOnLine && middleOnLine){
-      turnRightForward(speed_now); delay(100);
-      Serial.println("On the line - going left");
-      lineAlreadyFound = true;
+    // sharp turns
+    else if(leftOnLine && middleLeftOnLine && !middleRightOnLine && !rightOnLine ){//1100
+      turnLeftOnSpot(SPEED_MAX); //delay(100);
     } 
-    // if right sensor detects, needs to turn right
-    else if(!leftOnLine && rightOnLine && middleOnLine) {
-      turnLeftForward(speed_now); delay(100);
-      Serial.println("On the line -  going right");
-      lineAlreadyFound = true;
+    else if(!leftOnLine && !middleLeftOnLine && middleRightOnLine && rightOnLine){
+      turnRightOnSpot(SPEED_MAX); //delay(100);
     }
-
-    
-    
-    //if ran out of line or lost it
-    if(middleOnLine)
-      middleLinePrevMillis = now;
-    else{
-      // if middle havent seen it in a while
-      if(now - middleLinePrevMillis > LINE_INTERVAL){
-        lineAlreadyFound = false;
-      }
+    // super sharp tunrs
+    else if(leftOnLine && middleLeftOnLine && middleRightOnLine ){//1100
+      turnLeftOnSpot(SPEED_MAX); delay(110);
+    } 
+    else if(middleLeftOnLine && middleRightOnLine && rightOnLine){
+      turnRightOnSpot(SPEED_MAX); delay(110);
     }
-      /*
-    } else{
-     
-      if(leftOnLine && !rightOnLine){
-        Serial.print(">| | Left Sees Line - ");
-
-        //move forward until middle sees line
-        while(!middleOnLine ) {
-          moveForward(SPEED_MIN);
-        }        
-        Serial.print(" | Middle on Line. Now turning RIGHT to refind! ");
-
-        // turn right until R_IR sees...
-        while(!rightOnLine){
-          turnRightOnSpot(speed_now);     
-        }  
-        Serial.print(" | RIGHT IR sees! "); 
-
-        // ...and unsees
-        while(rightOnLine){
-          turnRightOnSpot(speed_now);    
-        }   
-        Serial.print(" | RIGHT no longer sees! Should be between L and L IRs! "); 
-
-        lineAlreadyFound = true;
-      }
-      else {// if( (leftOnLine && !rightOnLine) || (leftOnLine && rightOnLine) ){
-        Serial.print(">| | Right Sees Line - "); Serial.print(rightOnLine);
-
-        //move forward until middle sees line
-        while(!middleOnLine ){
-          moveForward(SPEED_MIN);
-        }        
-        Serial.print(" | Middle on Line. Now turning LEFT to refind! ");
-
-        // turn right until R_IR sees...
-        while(!rightOnLine) {
-          turnLeftOnSpot(speed_now);
-        }       
-        Serial.print(" | RIGHT IR sees! "); 
-
-        // ...and unsees
-        while(rightOnLine){
-           turnLeftOnSpot(speed_now);     
-        }  
-        Serial.print(" | RIGHT no longer sees! Should be between L and L IRs! "); 
-
-        lineAlreadyFound = true;
-      }
-      
-
+    // WEIRD sharp tunrs
+    else if(leftOnLine && middleRightOnLine){//1100
+      turnLeftOnSpot(SPEED_MAX); delay(150);
+    } 
+    else if(middleLeftOnLine && rightOnLine){
+      turnRightOnSpot(SPEED_MAX); delay(150);
     }
-*/
-    
-    
-    // when the IR light is detected on the left, stop until it is off
-    /*
-    if(IrReceiver.decode()) {
-      stop(); delay(10);
-
-      do{
-        Serial.print("!!!!IR signal detected");
-        IrReceiver.resume();
-        delay(100);
-      } while(IrReceiver.decode());
-      
-      delay(300);
-    }
-    */
-  }
-  
+  }// END NO OBSTACLE / LINE IF SIDE
   // obstacle detected, handle it over anything else
   else{
     stop(); delay(STOP_TIME);
@@ -472,25 +398,25 @@ void loop(){
     servo.write(90); delay(100); // in between to reduce s
 
     // record the state change time now
-    objectStateStartedAt = now + 2000 + 100; // now doesnt update. have to manually add 
+    objectStateStartedAt = millis();//now + 2000 + 100; // now doesnt update. have to manually add 
 
     Serial.print("OBJECT found at: "); Serial.println(pos);
     //Serial.print(" | left: "); Serial.print(distanceL); 
     //Serial.print(" | right: "); Serial.println(distanceR); 
 
-    if (distanceR >= distanceL && distanceR > OBSTACLE_DISTANCE*0.8)
-      turnRightOnSpot(turn_speed);
-    else if (distanceL >= distanceR && distanceL > OBSTACLE_DISTANCE*0.8)
-      turnLeftOnSpot(turn_speed);
+    if (distanceR >= distanceL && distanceR > OBSTACLE_DISTANCE*0.7)
+      turnRightOnSpot(SPEED_MIN);
+    else if (distanceL >= distanceR && distanceL > OBSTACLE_DISTANCE*0.7)
+      turnLeftOnSpot(SPEED_MIN);
     else
-      moveBackwards(speed_now);
+      moveBackwards(SPEED_MIN+13);
 
   }// END MOVEMENT LOGIC TREE
   
 }
-/*==============================================================================================*/
 
 
+/*========================================= HELPERS ========================================*/
 
 /* ***********************************************************
  * LINE FOLLOWING FUNCTIONS
@@ -503,17 +429,15 @@ bool isOnLine(int value, int threshold) {
 }
 
 void getLineIR(){
-
   L_lineAnalog = analogRead(L_IR_ANALOG_PIN);
   Serial.print("L IR analog value: ");  Serial.print(L_lineAnalog); 
 
   R_lineAnalog = analogRead(R_IR_ANALOG_PIN);
   Serial.print(" | R IR analog value: ");  Serial.print(R_lineAnalog); 
 
-  M_lineAnalog = analogRead(M_IR_ANALOG_PIN);
-  Serial.print(" | M IR analog value: ");  Serial.println(M_lineAnalog); 
+  MR_lineAnalog = analogRead(MR_IR_ANALOG_PIN);
+  Serial.print(" | M IR analog value: ");  Serial.println(MR_lineAnalog); 
 }
-
 
 
 /* ***********************************************************
